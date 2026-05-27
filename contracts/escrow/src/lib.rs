@@ -173,6 +173,29 @@ impl Escrow {
         Ok(())
     }
 
+    pub fn set_fee_collector(env: Env, new_collector: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("contract not initialized");
+        admin.require_auth();
+
+        let old_collector: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeCollector)
+            .expect("fee collector not set");
+
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeCollector, &new_collector);
+        env.events().publish(
+            ("FeeCollectorUpdated",),
+            (old_collector, new_collector),
+        );
+    }
+
     pub fn create_escrow(
         env: Env,
         seller: Address,
