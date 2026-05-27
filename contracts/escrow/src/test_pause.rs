@@ -1,5 +1,5 @@
 #![cfg(test)]
-
+extern crate std;
 use super::*;
 use soroban_sdk::{testutils::Address as _, token, Address, Env, String as SorobanString, Symbol};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -18,9 +18,17 @@ fn setup_env() -> (Env, Address, Address, Address, Address, Address, Address) {
     let token_address = env.register_stellar_asset_contract(token_admin.clone());
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-    client.initialize(&admin, &fee_collector);
+    client.initialize(&admin, &fee_collector, &0_i128);
 
-    (env, admin, seller, buyer, resolver, token_address, contract_id)
+    (
+        env,
+        admin,
+        seller,
+        buyer,
+        resolver,
+        token_address,
+        contract_id,
+    )
 }
 
 fn mint_tokens(env: &Env, token: &Address, to: &Address, amount: i128) {
@@ -35,7 +43,8 @@ fn test_pause_blocks_mutations_but_keeps_views_available() {
 
     mint_tokens(&env, &token, &buyer, 1_000);
 
-    let escrow_id = client.create_escrow(&seller, &resolver, &token, &100_i128, &100_u32, &3600_u64);
+    let escrow_id =
+        client.create_escrow(&seller, &resolver, &token, &100_i128, &100_u32, &3600_u64);
     client.pause_contract();
 
     let config = client.get_fee_config();
