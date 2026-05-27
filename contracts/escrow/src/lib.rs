@@ -235,6 +235,30 @@ impl Escrow {
             .publish(("resolve_dispute",), (escrow_id, release_to_seller));
     }
 
+    pub fn cancel_escrow(env: Env, escrow_id: u32) {
+        let escrow: EscrowData = env
+            .storage()
+            .instance()
+            .get(&DataKey::Escrow(escrow_id))
+            .expect("escrow not found");
+
+        assert!(escrow.state == EscrowState::Funded, "escrow not funded");
+
+        let buyer = escrow.buyer.clone().expect("escrow has no buyer");
+        buyer.require_auth();
+
+        let token_client = token::Client::new(&env, &escrow.token);
+        token_client.transfer(&env.current_contract_address(), &buyer, &escrow.amount);
+
+        let mut updated = escrow;
+        updated.state = EscrowState::Refunded;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Escrow(escrow_id), &updated);
+        env.events().publish(("cancel_escrow",), escrow_id);
+    }
+
     pub fn auto_release(env: Env, escrow_id: u32) {
         let escrow: EscrowData = env
             .storage()
