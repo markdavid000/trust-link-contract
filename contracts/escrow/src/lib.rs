@@ -233,33 +233,15 @@ fn deduct_and_transfer(
     amount: i128,
     fee_bps: u32,
 ) -> Result<(), ContractError> {
-    if amount < 0 {
-        return Err(ContractError::InvalidAmount);
-    }
-
-    // Overflow-safe fee calculation using checked arithmetic.
-    // Returns ArithmeticOverflow instead of wrapping in release builds.
-    let part1 = amount
-        .checked_div(10_000)
-        .ok_or(ContractError::ArithmeticOverflow)?
-        .checked_mul(fee_bps as i128)
-        .ok_or(ContractError::ArithmeticOverflow)?;
-
-    let part2 = (amount % 10_000)
-        .checked_mul(fee_bps as i128)
-        .ok_or(ContractError::ArithmeticOverflow)?
-        .checked_div(10_000)
-        .ok_or(ContractError::ArithmeticOverflow)?;
-
-    let fee = part1
-        .checked_add(part2)
-        .ok_or(ContractError::ArithmeticOverflow)?;
-    let net = amount
-        .checked_sub(fee)
-        .ok_or(ContractError::ArithmeticOverflow)?;
-
-    token::Client::new(env, token_addr).transfer(&env.current_contract_address(), recipient, &net);
-    Ok(())
+    let (_fee, net) = helpers::payout::calculate_protocol_fee(amount, fee_bps)?;
+    
+    let mut transfers = soroban_sdk::Vec::new(env);
+    transfers.push_back(helpers::payout::TransferInstruction {
+        recipient: recipient.clone(),
+        amount: net,
+    });
+    
+    helpers::payout::execute_payout_transfers(env, token_addr, &transfers)
 }
 
 fn ensure_not_paused(env: &Env) {
@@ -608,6 +590,7 @@ impl Escrow {
         escrow_id: u64,
         resolution: ResolutionType,
     ) -> Result<(), ContractError> {
+        // 1. validate
         ensure_not_paused(&env);
         let mut escrow = load_escrow(&env, escrow_id)?;
 
@@ -623,10 +606,13 @@ impl Escrow {
             .get(&DataKey::ArbitrationFee)
             .unwrap_or(0);
 
-        if escrow.amount < arbitration_fee {
-            return Err(ContractError::InsufficientBalance);
-        }
+        // 2. calculate allocations
+        let transfers = helpers::payout::calculate_dispute_allocations(&env, &escrow, &resolution, arbitration_fee)?;
 
+        // 3. execute payouts
+        helpers::payout::execute_payout_transfers(&env, &escrow.token, &transfers)?;
+
+        // 4. update state
         // Overflow-safe subtraction for arbitration fee.
         escrow.amount = escrow
             .amount
@@ -642,24 +628,7 @@ impl Escrow {
             .ok_or(ContractError::ArithmeticOverflow)?;
         env.storage().instance().set(&total_key, &new_total);
 
-        let recipient = match resolution {
-            ResolutionType::Release => escrow.seller.clone(),
-            ResolutionType::Refund => escrow
-                .buyer
-                .clone()
-                .ok_or(ContractError::EscrowHasNoBuyer)?,
-        };
-
-        deduct_and_transfer(
-            &env,
-            &escrow.token,
-            &recipient,
-            escrow.amount,
-            escrow.fee_bps,
-        )?;
-
-        let mut updated = escrow;
-        updated.state = match resolution {
+        escrow.state = match resolution {
             ResolutionType::Release => EscrowState::Completed,
             ResolutionType::Refund => EscrowState::Refunded,
         };
@@ -667,9 +636,10 @@ impl Escrow {
         let mut dispute_data = load_dispute(&env, escrow_id)?;
         dispute_data.status = DisputeStatus::Resolved;
 
-        save_escrow(&env, escrow_id, &updated);
+        save_escrow(&env, escrow_id, &escrow);
         save_dispute(&env, escrow_id, &dispute_data);
 
+        // 5. emit events
         env.events()
             .publish(("resolve_dispute",), (escrow_id, resolution));
         Ok(())
@@ -755,6 +725,7 @@ impl Escrow {
     }
 }
 
+mod helpers;
 mod test;
 mod test_admin;
 mod test_arbitration_fee;
