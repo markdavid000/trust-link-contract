@@ -64,6 +64,8 @@ pub enum ContractError {
     ShippingWindowNotElapsed = 9,
     InvalidEvidenceHash = 10,
     DisputeNotFound = 11,
+    ArithmeticError = 12,
+    DisputeWindowClosed = 13,
 }
 
 #[contracttype]
@@ -78,6 +80,7 @@ pub struct EscrowData {
     pub shipping_window: u64,
     pub funded_at: u64,
     pub dispute_deadline: u64,
+    pub state: EscrowState,
 }
 
 #[contracttype]
@@ -106,21 +109,26 @@ pub struct FeeConfig {
     pub max_fee_bps: u32,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ContractError {
-    DisputeWindowClosed,
-}
-
 #[contract]
 pub struct Escrow;
 
-fn deduct_and_transfer(env: &Env, token_addr: &Address, recipient: &Address, amount: i128, fee_bps: u32) {
-    let fee = amount
+fn deduct_and_transfer(env: &Env, token_addr: &Address, recipient: &Address, amount: i128, fee_bps: u32) -> Result<(), ContractError> {
+    if amount < 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    // Use split calculation to avoid overflow for large amounts
+    // fee = (amount / 10000) * fee_bps + (amount % 10000) * fee_bps / 10000
+    let part1 = (amount / 10_000)
         .checked_mul(fee_bps as i128)
-        .expect("fee overflow")
-        / 10_000i128;
-    let net = amount.checked_sub(fee).expect("fee underflow");
+        .ok_or(ContractError::ArithmeticError)?;
+    let part2 = (amount % 10_000)
+        .checked_mul(fee_bps as i128)
+        .ok_or(ContractError::ArithmeticError)?
+        / 10_000;
+
+    let fee = part1.checked_add(part2).ok_or(ContractError::ArithmeticError)?;
+    let net = amount.checked_sub(fee).ok_or(ContractError::ArithmeticError)?;
 
     let token_client = token::Client::new(env, token_addr);
 
@@ -128,6 +136,7 @@ fn deduct_and_transfer(env: &Env, token_addr: &Address, recipient: &Address, amo
     // The admin can later withdraw them using the `withdraw_fees` function.
     // We only transfer the net amount to the recipient.
     token_client.transfer(&env.current_contract_address(), recipient, &net);
+    Ok(())
 }
 
 #[contractimpl]
@@ -181,9 +190,16 @@ impl Escrow {
         amount: i128,
         fee_bps: u32,
         shipping_window: u64,
-    ) -> u64 {
+    ) -> Result<u64, ContractError> {
         seller.require_auth();
-        assert!(fee_bps <= MAX_FEE_BPS, "fee exceeds maximum");
+
+        if amount <= 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        if fee_bps > MAX_FEE_BPS {
+            return Err(ContractError::FeeExceedsMax);
+        }
 
         let escrow_id: u64 = env
             .storage()
@@ -212,19 +228,21 @@ impl Escrow {
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
         env.events().publish(("create_escrow",), escrow_id);
-        escrow_id
+        Ok(escrow_id)
     }
 
-    pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) {
+    pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
         buyer.require_auth();
 
         let mut escrow: EscrowData = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
-            .expect("escrow not found");
+            .ok_or(ContractError::EscrowNotFound)?;
 
-        assert!(escrow.state == EscrowState::Pending, "escrow not pending");
+        if escrow.state != EscrowState::Pending {
+            return Err(ContractError::InvalidState);
+        }
 
         escrow.buyer = Some(buyer.clone());
         escrow.state = EscrowState::Funded;
@@ -238,25 +256,27 @@ impl Escrow {
             .instance()
             .set(&DataKey::Escrow(escrow_id), &escrow);
         env.events().publish(("fund_escrow",), escrow_id);
+        Ok(())
     }
 
-    pub fn confirm_delivery(env: Env, escrow_id: u64) {
+    pub fn confirm_delivery(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         let escrow: EscrowData = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
-            .expect("escrow not found");
+            .ok_or(ContractError::EscrowNotFound)?;
 
-        assert!(escrow.state == EscrowState::Funded, "escrow not funded");
-        assert!(
-            env.ledger().timestamp() >= escrow.dispute_deadline,
-            "dispute window not closed"
-        );
+        if escrow.state != EscrowState::Funded {
+            return Err(ContractError::InvalidState);
+        }
+        if env.ledger().timestamp() < escrow.dispute_deadline {
+            return Err(ContractError::DisputeWindowClosed);
+        }
 
-        let buyer = escrow.buyer.clone().expect("escrow has no buyer");
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
         buyer.require_auth();
 
-        deduct_and_transfer(&env, &escrow.token, &escrow.seller, escrow.amount, escrow.fee_bps);
+        deduct_and_transfer(&env, &escrow.token, &escrow.seller, escrow.amount, escrow.fee_bps)?;
 
         let mut updated = escrow;
         updated.state = EscrowState::Completed;
@@ -265,6 +285,7 @@ impl Escrow {
             .instance()
             .set(&DataKey::Escrow(escrow_id), &updated);
         env.events().publish(("confirm_delivery",), escrow_id);
+        Ok(())
     }
 
     pub fn raise_dispute(
@@ -273,20 +294,21 @@ impl Escrow {
         reason: soroban_sdk::Symbol,
         description: soroban_sdk::String,
         evidence_hash: soroban_sdk::BytesN<32>,
-    ) {
+    ) -> Result<(), ContractError> {
         let escrow: EscrowData = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
-            .expect("escrow not found");
+            .ok_or(ContractError::EscrowNotFound)?;
 
-        assert!(escrow.state == EscrowState::Funded, "escrow not funded");
-        assert!(
-            env.ledger().timestamp() >= escrow.dispute_deadline,
-            "dispute window not closed"
-        );
+        if escrow.state != EscrowState::Funded {
+            return Err(ContractError::InvalidState);
+        }
+        if env.ledger().timestamp() >= escrow.dispute_deadline {
+            return Err(ContractError::DisputeWindowClosed);
+        }
 
-        let buyer = escrow.buyer.clone().expect("escrow has no buyer");
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
         buyer.require_auth();
 
         let mut updated = escrow;
@@ -310,25 +332,28 @@ impl Escrow {
 
         env.events()
             .publish(("raise_dispute",), (escrow_id,));
+        Ok(())
     }
 
-    pub fn resolve_dispute(env: Env, escrow_id: u64, resolution: ResolutionType) {
+    pub fn resolve_dispute(env: Env, escrow_id: u64, resolution: ResolutionType) -> Result<(), ContractError> {
         let escrow: EscrowData = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
-            .expect("escrow not found");
+            .ok_or(ContractError::EscrowNotFound)?;
 
-        assert!(escrow.state == EscrowState::Disputed, "escrow not disputed");
+        if escrow.state != EscrowState::Disputed {
+            return Err(ContractError::InvalidState);
+        }
 
         escrow.resolver.require_auth();
 
         let recipient = match resolution {
             ResolutionType::Release => escrow.seller.clone(),
-            ResolutionType::Refund => escrow.buyer.clone().expect("escrow has no buyer"),
+            ResolutionType::Refund => escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?,
         };
 
-        deduct_and_transfer(&env, &escrow.token, &recipient, escrow.amount, escrow.fee_bps);
+        deduct_and_transfer(&env, &escrow.token, &recipient, escrow.amount, escrow.fee_bps)?;
 
         let mut updated = escrow;
         updated.state = match resolution {
@@ -340,7 +365,7 @@ impl Escrow {
             .storage()
             .instance()
             .get(&DataKey::Dispute(escrow_id))
-            .expect("dispute not found");
+            .ok_or(ContractError::DisputeNotFound)?;
         dispute_data.status = DisputeStatus::Resolved;
 
         env.storage()
@@ -352,26 +377,27 @@ impl Escrow {
 
         env.events()
             .publish(("resolve_dispute",), (escrow_id, resolution));
+        Ok(())
     }
 
-    pub fn auto_release(env: Env, escrow_id: u64) {
+    pub fn auto_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         let escrow: EscrowData = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
-            .expect("escrow not found");
+            .ok_or(ContractError::EscrowNotFound)?;
 
-        assert!(escrow.state == EscrowState::Funded, "escrow not funded");
-        assert!(
-            env.ledger().timestamp() >= escrow.dispute_deadline,
-            "dispute window not closed"
-        );
-        assert!(
-            env.ledger().timestamp() >= escrow.funded_at + escrow.shipping_window,
-            "shipping window not elapsed"
-        );
+        if escrow.state != EscrowState::Funded {
+            return Err(ContractError::InvalidState);
+        }
+        if env.ledger().timestamp() < escrow.dispute_deadline {
+            return Err(ContractError::DisputeWindowClosed);
+        }
+        if env.ledger().timestamp() < escrow.funded_at + escrow.shipping_window {
+            return Err(ContractError::ShippingWindowNotElapsed);
+        }
 
-        deduct_and_transfer(&env, &escrow.token, &escrow.seller, escrow.amount, escrow.fee_bps);
+        deduct_and_transfer(&env, &escrow.token, &escrow.seller, escrow.amount, escrow.fee_bps)?;
 
         let mut updated = escrow;
         updated.state = EscrowState::Completed;
@@ -380,6 +406,7 @@ impl Escrow {
             .instance()
             .set(&DataKey::Escrow(escrow_id), &updated);
         env.events().publish(("auto_release",), escrow_id);
+        Ok(())
     }
 
     pub fn get_escrow(env: Env, escrow_id: u64) -> EscrowData {
@@ -416,3 +443,4 @@ mod test_withdraw_fees;
 mod test_dispute;
 mod test_escrow_id;
 mod test_resolution;
+mod test_overflow;

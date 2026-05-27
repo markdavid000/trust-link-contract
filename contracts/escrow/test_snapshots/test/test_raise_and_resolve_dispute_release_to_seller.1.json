@@ -456,6 +456,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "dispute_deadline"
+                            },
+                            "val": {
+                              "u64": "172800"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "fee_bps"
                             },
                             "val": {
