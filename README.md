@@ -18,12 +18,12 @@ The TrustLink Escrow Contract is the **trustless core** of the TrustLink protoco
 
 ### Why This Matters
 
-| Problem | TrustLink Solution |
-|---|---|
-| Buyers pay upfront and get scammed | Funds are locked in the contract until delivery is confirmed |
-| Sellers ship goods and buyers ghost | Seller is guaranteed payment upon verified delivery |
-| Centralized escrow is slow & expensive | Stellar settles in ~5s for a fraction of a cent |
-| Trust relies on reputation systems | Trust is enforced by immutable code |
+| Problem                                | TrustLink Solution                                           |
+| -------------------------------------- | ------------------------------------------------------------ |
+| Buyers pay upfront and get scammed     | Funds are locked in the contract until delivery is confirmed |
+| Sellers ship goods and buyers ghost    | Seller is guaranteed payment upon verified delivery          |
+| Centralized escrow is slow & expensive | Stellar settles in ~5s for a fraction of a cent              |
+| Trust relies on reputation systems     | Trust is enforced by immutable code                          |
 
 ---
 
@@ -100,24 +100,46 @@ The TrustLink Escrow Contract is the **trustless core** of the TrustLink protoco
 
 ### Core Escrow Operations
 
-| Function | Access | Description |
-|---|---|---|
-| `create_escrow(vendor, buyer, token, amount, shipping_window)` | Public | Initializes a new escrow instance |
-| `fund_escrow(escrow_id)` | Buyer | Transfers tokens into the contract vault |
-| `mark_shipped(escrow_id, tracking_id)` | Vendor | Updates state to `SHIPPED`, starts delivery clock |
-| `confirm_delivery(escrow_id)` | Buyer | Releases funds to vendor immediately |
-| `auto_release(escrow_id)` | System/Admin | Releases funds 48h after delivery if no dispute |
-| `raise_dispute(escrow_id, evidence_hash)` | Buyer | Freezes funds and opens dispute window |
-| `resolve_dispute(escrow_id, release_to)` | Admin | Admin resolves dispute — releases or refunds |
-| `cancel_escrow(escrow_id)` | Vendor/Buyer | Cancels a `PENDING` escrow and refunds buyer |
+| Function                                                       | Access       | Description                                       |
+| -------------------------------------------------------------- | ------------ | ------------------------------------------------- |
+| `create_escrow(vendor, buyer, token, amount, shipping_window)` | Public       | Initializes a new escrow instance                 |
+| `fund_escrow(escrow_id)`                                       | Buyer        | Transfers tokens into the contract vault          |
+| `mark_shipped(escrow_id, tracking_id)`                         | Vendor       | Updates state to `SHIPPED`, starts delivery clock |
+| `confirm_delivery(escrow_id)`                                  | Buyer        | Releases funds to vendor immediately              |
+| `auto_release(escrow_id)`                                      | System/Admin | Releases funds 48h after delivery if no dispute   |
+| `raise_dispute(escrow_id, evidence_hash)`                      | Buyer        | Freezes funds and opens dispute window            |
+| `resolve_dispute(escrow_id, release_to)`                       | Admin        | Admin resolves dispute — releases or refunds      |
+| `cancel_escrow(escrow_id)`                                     | Vendor/Buyer | Cancels a `PENDING` escrow and refunds buyer      |
 
 ### View Functions
 
-| Function | Returns | Description |
-|---|---|---|
-| `get_escrow(escrow_id)` | `EscrowData` | Full escrow state and metadata |
+| Function                        | Returns         | Description                     |
+| ------------------------------- | --------------- | ------------------------------- |
+| `get_escrow(escrow_id)`         | `EscrowData`    | Full escrow state and metadata  |
 | `get_escrows_by_vendor(vendor)` | `Vec<EscrowId>` | All escrows created by a vendor |
-| `get_escrows_by_buyer(buyer)` | `Vec<EscrowId>` | All escrows funded by a buyer |
+| `get_escrows_by_buyer(buyer)`   | `Vec<EscrowId>` | All escrows funded by a buyer   |
+
+---
+
+## 🛑 Error Index
+
+This table maps every `ContractError` numeric code to the exact condition that triggers it.
+
+| Code | Error Variant              | Trigger Condition                                                                                                                                                                                                                               |
+| ---- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `1`  | `InvalidAmount`            | `create_escrow` or `withdraw_fees` received a non-positive amount, or internal transfer calculations received a negative amount.                                                                                                                |
+| `2`  | `InsufficientBalance`      | `withdraw_fees` requested more tokens than the contract currently holds.                                                                                                                                                                        |
+| `3`  | `EscrowNotFound`           | Any escrow-specific operation was called with an unknown escrow ID.                                                                                                                                                                             |
+| `4`  | `InvalidState`             | Operation was attempted in the wrong escrow state, such as funding a non-pending escrow, confirming delivery before funding, raising dispute outside the funded state, resolving a non-disputed escrow, or auto-release on a non-funded escrow. |
+| `5`  | `NotAuthorized`            | A required `require_auth()` check failed when the caller did not sign with the expected address.                                                                                                                                                |
+| `6`  | `AlreadyInitialized`       | `initialize()` was called after the contract had already been initialized.                                                                                                                                                                      |
+| `7`  | `FeeExceedsMax`            | `create_escrow` submitted `fee_bps` above the hard cap of `300` basis points (3%).                                                                                                                                                              |
+| `8`  | `EscrowHasNoBuyer`         | A buyer-specific action was attempted before the escrow had an assigned buyer, such as `confirm_delivery`, `raise_dispute`, or refund resolution.                                                                                               |
+| `9`  | `ShippingWindowNotElapsed` | `auto_release` was called before the escrow's configured shipping window had elapsed after funding.                                                                                                                                             |
+| `10` | `InvalidEvidenceHash`      | Invalid dispute evidence hash payload; reserved for dispute evidence validation failures.                                                                                                                                                       |
+| `11` | `DisputeNotFound`          | `resolve_dispute` was called for an escrow with no stored dispute record.                                                                                                                                                                       |
+| `12` | `ArithmeticError`          | Internal checked arithmetic failed during fee or net amount calculation in `deduct_and_transfer()`.                                                                                                                                             |
+| `13` | `DisputeWindowClosed`      | `confirm_delivery` was called before the dispute window ended, `raise_dispute` was called after the dispute deadline, or `auto_release` was called before the dispute window closed.                                                            |
 
 ---
 
@@ -286,11 +308,11 @@ This repository is part of the **[Stellar Wave Program](https://www.drips.networ
 
 ### Issue Complexity Guide
 
-| Label | Points | Examples |
-|---|---|---|
-| `trivial` | 100 pts | Fix a typo, add a missing error code, improve a comment |
-| `medium` | 150 pts | Add a test case, implement a view function, fix a bug |
-| `high` | 200 pts | New contract function, refactor storage model, security fix |
+| Label     | Points  | Examples                                                    |
+| --------- | ------- | ----------------------------------------------------------- |
+| `trivial` | 100 pts | Fix a typo, add a missing error code, improve a comment     |
+| `medium`  | 150 pts | Add a test case, implement a view function, fix a bug       |
+| `high`    | 200 pts | New contract function, refactor storage model, security fix |
 
 **Good First Issues** are specifically scoped and documented to help new Soroban developers ramp up quickly. The contract is thoroughly commented — even if you're new to Rust or Soroban, there's a path in.
 
