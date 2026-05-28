@@ -13,6 +13,10 @@ pub enum DataKey {
     TtlExtensionLedgers,
     ArbitrationFee,
     TotalArbitrationFees(Address),
+    TotalCreated,
+    TotalCompleted,
+    TotalDisputed,
+    TotalRefunded,
 }
 
 #[contracttype]

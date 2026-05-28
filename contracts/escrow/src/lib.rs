@@ -1,8 +1,23 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Symbol, BytesN, Vec};
 
+pub mod errors;
+pub mod events;
 pub mod types;
-pub use crate::types::*;
+pub use crate::errors::ContractError;
+pub use crate::events::{
+    AdminRotated, AutoReleased, ContractPausedEvent, ContractUnpausedEvent, DeliveryRecorded,
+    DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted, EscrowCreated,
+    EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn,
+    emit_admin_rotated, emit_auto_released, emit_contract_paused, emit_contract_unpaused,
+    emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved, emit_escrow_cancelled,
+    emit_escrow_completed, emit_escrow_created, emit_escrow_funded, emit_escrow_shipped,
+    emit_fee_updated, emit_fees_withdrawn,
+};
+pub use crate::types::{
+    ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowData, EscrowState,
+    FeeConfig, ResolutionType,
+};
 
 /// Maximum protocol fee in basis points (300 = 3%).
 const MAX_FEE_BPS: u32 = 300;
@@ -132,110 +147,6 @@ fn deduct_and_transfer(env: &Env, token_addr: &Address, recipient: &Address, amo
 }
 
 /// Storage keys for persisting escrow data and the global escrow counter.
-#[contracttype]
-pub enum DataKey {
-    Admin,
-    Escrow(u64),
-    EscrowCount,
-    EscrowCounter,
-    FeeCollector,
-    Dispute(u64),
-    Paused,
-    DefaultFeeBps,
-    TtlExtensionLedgers,
-    ArbitrationFee,
-    TotalArbitrationFees(Address),
-    TotalCreated,
-    TotalCompleted,
-    TotalDisputed,
-    TotalRefunded,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeesWithdrawn {
-    pub token: Address,
-    pub to: Address,
-    pub amount: i128,
-    pub timestamp: u64,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractPaused {
-    pub admin: Address,
-    pub timestamp: u64,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractUnpaused {
-    pub admin: Address,
-    pub timestamp: u64,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum EscrowState {
-    Pending,
-    Funded,
-    Completed,
-    Disputed,
-    Refunded,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeConfig {
-    pub collector: Address,
-    pub max_fee_bps: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractStats {
-    pub total_created: u64,
-    pub total_completed: u64,
-    pub total_disputed: u64,
-    pub total_refunded: u64,
-}
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum ContractError {
-    InvalidAmount = 1,
-    InsufficientBalance = 2,
-    EscrowNotFound = 3,
-    InvalidState = 4,
-    NotAuthorized = 5,
-    AlreadyInitialized = 6,
-    FeeExceedsMax = 7,
-    EscrowHasNoBuyer = 8,
-    ShippingWindowNotElapsed = 9,
-    InvalidEvidenceHash = 10,
-    DisputeNotFound = 11,
-    ContractPaused = 12,
-}
-
-/// Lifecycle states of an escrow transaction.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum EscrowState {
-    /// Escrow created but not yet funded by a buyer.
-    Pending,
-    /// Escrow funded and awaiting delivery confirmation or dispute.
-    Funded,
-    /// Seller has marked the order as shipped.
-    Shipped,
-    /// Escrow successfully completed with funds released to the seller.
-    Completed,
-    /// Escrow in dispute, awaiting resolver decision.
-    Disputed,
-    /// Escrow refunded to the buyer after dispute resolution.
-    Refunded,
-}
-
 fn ensure_not_paused(env: &Env) {
     let paused = env
         .storage()
@@ -275,13 +186,7 @@ impl Escrow {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "contract_paused"),),
-            ContractPaused {
-                admin,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
+        emit_contract_paused(&env, admin);
     }
 
     pub fn unpause_contract(env: Env) {
@@ -289,13 +194,7 @@ impl Escrow {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "contract_unpaused"),),
-            ContractUnpaused {
-                admin,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
+        emit_contract_unpaused(&env, admin);
     }
 
     /// Rotates the admin to a new address. Requires auth from the current admin.
@@ -307,14 +206,7 @@ impl Escrow {
             .expect("not initialized");
         old_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "admin_rotated"),),
-            AdminRotated {
-                old_admin,
-                new_admin,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
+        emit_admin_rotated(&env, old_admin, new_admin);
     }
 
     /// Updates the default protocol fee. Requires admin auth.
@@ -328,7 +220,9 @@ impl Escrow {
         if fee_bps > MAX_FEE_BPS {
             return Err(ContractError::FeeExceedsMax);
         }
+        let old_fee_bps: u32 = env.storage().instance().get(&DataKey::DefaultFeeBps).unwrap_or(0);
         env.storage().instance().set(&DataKey::DefaultFeeBps, &fee_bps);
+        emit_fee_updated(&env, old_fee_bps, fee_bps);
         Ok(())
     }
 
@@ -366,15 +260,7 @@ impl Escrow {
 
         token_client.transfer(&env.current_contract_address(), &to, &amount);
 
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "fees_withdrawn"),),
-            FeesWithdrawn {
-                token,
-                to,
-                amount,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
+        emit_fees_withdrawn(&env, token, to, amount);
 
         Ok(())
     }
@@ -425,8 +311,33 @@ impl Escrow {
 
         save_escrow(&env, escrow_id, &escrow);
         increment_counter(&env, &DataKey::TotalCreated);
-        env.events().publish(("create_escrow",), escrow_id);
+        emit_escrow_created(
+            &env,
+            escrow_id,
+            escrow.seller.clone(),
+            escrow.resolver.clone(),
+            escrow.token.clone(),
+            escrow.amount,
+            escrow.fee_bps,
+            escrow.shipping_window,
+        );
         Ok(escrow_id)
+    }
+
+    pub fn cancel_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        if escrow.state != EscrowState::Pending {
+            return Err(ContractError::InvalidState);
+        }
+
+        escrow.seller.clone().require_auth();
+        escrow.state = EscrowState::Canceled;
+
+        save_escrow(&env, escrow_id, &escrow);
+        emit_escrow_cancelled(&env, escrow_id, escrow.seller);
+        Ok(())
     }
 
     pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
@@ -448,7 +359,7 @@ impl Escrow {
         token_client.transfer(&buyer, &env.current_contract_address(), &escrow.amount);
 
         save_escrow(&env, escrow_id, &escrow);
-        env.events().publish(("fund_escrow",), escrow_id);
+        emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
         Ok(())
     }
 
@@ -465,8 +376,9 @@ impl Escrow {
         escrow.seller.clone().require_auth();
         escrow.state = EscrowState::Shipped;
         escrow.tracking_id = Some(tracking_id);
+        let tracking = escrow.tracking_id.clone().expect("tracking id set");
         save_escrow(&env, escrow_id, &escrow);
-        env.events().publish(("mark_shipped",), escrow_id);
+        emit_escrow_shipped(&env, escrow_id, escrow.seller, tracking);
         Ok(())
     }
 
@@ -488,10 +400,7 @@ impl Escrow {
         escrow.delivered_at = delivered_at;
         save_escrow(&env, escrow_id, &escrow);
 
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "delivery_recorded"),),
-            DeliveryRecorded { escrow_id, delivered_at },
-        );
+        emit_delivery_recorded(&env, escrow_id, delivered_at);
         Ok(())
     }
 
@@ -516,7 +425,7 @@ impl Escrow {
 
         save_escrow(&env, escrow_id, &updated);
         increment_counter(&env, &DataKey::TotalCompleted);
-        env.events().publish(("confirm_delivery",), escrow_id);
+        emit_escrow_completed(&env, escrow_id, escrow.seller, escrow.amount, escrow.fee_bps);
         Ok(())
     }
 
@@ -546,6 +455,10 @@ impl Escrow {
         let mut updated = escrow;
         updated.state = EscrowState::Disputed;
 
+        let reason_event = reason.clone();
+        let description_event = description.clone();
+        let evidence_hash_event = evidence_hash.clone();
+
         let dispute_data = DisputeData {
             escrow_id,
             reason,
@@ -559,7 +472,14 @@ impl Escrow {
         save_escrow(&env, escrow_id, &updated);
         save_dispute(&env, escrow_id, &dispute_data);
         increment_counter(&env, &DataKey::TotalDisputed);
-        env.events().publish(("raise_dispute",), (escrow_id,));
+        emit_dispute_raised(
+            &env,
+            escrow_id,
+            buyer,
+            reason_event,
+            description_event,
+            evidence_hash_event,
+        );
         Ok(())
     }
 
@@ -613,7 +533,15 @@ impl Escrow {
             ResolutionType::Refund => increment_counter(&env, &DataKey::TotalRefunded),
         };
 
-        env.events().publish(("resolve_dispute",), (escrow_id, resolution));
+        emit_dispute_resolved(
+            &env,
+            escrow_id,
+            escrow.resolver,
+            resolution,
+            recipient,
+            escrow.amount,
+            arbitration_fee,
+        );
         Ok(())
     }
 
@@ -652,7 +580,7 @@ impl Escrow {
 
         save_escrow(&env, escrow_id, &updated);
         increment_counter(&env, &DataKey::TotalCompleted);
-        env.events().publish(("auto_release",), escrow_id);
+        emit_auto_released(&env, escrow_id, escrow.seller, escrow.amount, escrow.fee_bps);
         Ok(())
     }
 

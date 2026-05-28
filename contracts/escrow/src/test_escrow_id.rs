@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+use crate::{Escrow, EscrowCancelled, EscrowClient};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec};
 
 fn setup_env() -> (Env, Address, Address, Address, Address, Address) {
     let env = Env::default();
@@ -14,6 +14,17 @@ fn setup_env() -> (Env, Address, Address, Address, Address, Address) {
     let fee_collector = Address::generate(&env);
 
     (env, admin, seller, resolver, token, fee_collector)
+}
+
+fn has_cancel_event(env: &Env, contract_id: &Address, escrow_id: u64, seller: &Address) -> bool {
+    let expected_topic = vec![&env, Symbol::new(env, "escrow_cancelled").into_val(env)];
+    env.events().all().into_iter().any(|(event_contract, topics, data)| {
+        event_contract == *contract_id
+            && topics == expected_topic
+            && EscrowCancelled::try_from_val(env, &data)
+                .map(|event| event.escrow_id == escrow_id && &event.seller == seller)
+                .unwrap_or(false)
+    })
 }
 
 #[test]
@@ -67,6 +78,7 @@ fn test_cancelled_escrow_does_not_reset_counter() {
     
     // Ensure cancellation of #1 doesn't reset counter to 1 or 2
     client.cancel_escrow(&id1);
+    assert!(has_cancel_event(&env, &contract_id, id1, &seller));
 
     // Create a new escrow after cancellation
     let next_id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);

@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{test_helpers::setup_contract, ContractError, DataKey, FeeUpdated};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, IntoVal, Symbol, TryFromVal, Val};
 
 /// Test: set_fee with 0 bps (minimum)
 #[test]
@@ -93,6 +93,17 @@ fn test_set_fee_emits_event() {
     // Second call: 100 -> 250
     let result2 = client.try_set_fee(&250_u32);
     assert!(result2.is_ok(), "second set_fee succeeds");
+
+    let expected_topic = vec![&env, Symbol::new(&env, "fee_updated").into_val(&env)];
+    let events = env.events().all();
+    let saw_fee_updated = events.into_iter().any(|(event_contract, topics, data)| {
+        event_contract == client.address
+            && topics == expected_topic
+            && FeeUpdated::try_from_val(&env, &data)
+                .map(|event| event.old_fee_bps == 100 && event.new_fee_bps == 250)
+                .unwrap_or(false)
+    });
+    assert!(saw_fee_updated, "fee_updated event should be emitted for the latest update");
 
     // Verify final value
     let stored = env.as_contract(&client.address, || {

@@ -1,9 +1,9 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient, ResolutionType};
+use crate::{DisputeResolved, Escrow, EscrowClient, ResolutionType};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env, String as SorobanString, Symbol,
+    token, Address, Env, IntoVal, String as SorobanString, Symbol, TryFromVal, vec,
 };
 
 fn setup(env: &Env) -> (Address, Address, Address, Address, Address, Address) {
@@ -106,6 +106,17 @@ fn test_arbitration_fee_deduction_on_resolve_refund() {
     );
 
     client.resolve_dispute(&id, &ResolutionType::Refund);
+
+    let expected_topic = vec![&env, Symbol::new(&env, "dispute_resolved").into_val(&env)];
+    let events = env.events().all();
+    let saw_refund_event = events.into_iter().any(|(event_contract, topics, data)| {
+        event_contract == contract_id
+            && topics == expected_topic
+            && DisputeResolved::try_from_val(&env, &data)
+                .map(|event| event.escrow_id == id && event.resolution == ResolutionType::Refund)
+                .unwrap_or(false)
+    });
+    assert!(saw_refund_event, "dispute_resolved refund event should be emitted");
 
     // Calculation:
     // 1. amount = 1000
