@@ -594,10 +594,6 @@ impl Escrow {
         // 2. calculate allocations
         let transfers = helpers::payout::calculate_dispute_allocations(&env, &escrow, &resolution, arbitration_fee)?;
 
-        // 3. execute payouts
-        helpers::payout::execute_payout_transfers(&env, &escrow.token, &transfers)?;
-
-        // 4. update state
         // Overflow-safe subtraction for arbitration fee.
         escrow.amount = escrow
             .amount
@@ -613,6 +609,22 @@ impl Escrow {
             .ok_or(ContractError::ArithmeticOverflow)?;
         env.storage().instance().set(&total_key, &new_total);
 
+        let recipient = match resolution {
+            ResolutionType::Release => escrow.seller.clone(),
+            ResolutionType::Refund => escrow
+                .buyer
+                .clone()
+                .ok_or(ContractError::EscrowHasNoBuyer)?,
+        };
+
+        deduct_and_transfer(
+            &env,
+            &escrow.token,
+            &recipient,
+            escrow.amount,
+            escrow.fee_bps,
+        )?;
+
         escrow.state = match resolution {
             ResolutionType::Release => EscrowState::Completed,
             ResolutionType::Refund => EscrowState::Refunded,
@@ -624,7 +636,6 @@ impl Escrow {
         save_escrow(&env, escrow_id, &escrow);
         save_dispute(&env, escrow_id, &dispute_data);
 
-        // 5. emit events
         env.events()
             .publish(("resolve_dispute",), (escrow_id, resolution));
         Ok(())
