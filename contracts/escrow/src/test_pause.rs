@@ -25,7 +25,7 @@ fn test_create_escrow_blocked_when_paused() {
     let (env, _admin, seller, _buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
     client.pause_contract();
-    let result = client.try_create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let result = client.try_create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     assert!(matches!(result, Err(Ok(ContractError::ContractPaused))));
 }
 
@@ -33,7 +33,7 @@ fn test_create_escrow_blocked_when_paused() {
 fn test_fund_escrow_blocked_when_paused() {
     let (env, _admin, seller, buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.pause_contract();
     let result = client.try_fund_escrow(&id, &buyer);
     assert!(matches!(result, Err(Ok(ContractError::ContractPaused))));
@@ -43,7 +43,7 @@ fn test_fund_escrow_blocked_when_paused() {
 fn test_mark_shipped_blocked_when_paused() {
     let (env, _admin, seller, buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     client.pause_contract();
     let result = client.try_mark_shipped(&id, &soroban_sdk::String::from_str(&env, "TRACK001"));
@@ -54,7 +54,7 @@ fn test_mark_shipped_blocked_when_paused() {
 fn test_confirm_delivery_blocked_when_paused() {
     let (env, _admin, seller, buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     env.ledger().set_timestamp(DISPUTE_WINDOW + 1);
     client.pause_contract();
@@ -66,7 +66,7 @@ fn test_confirm_delivery_blocked_when_paused() {
 fn test_raise_dispute_blocked_when_paused() {
     let (env, _admin, seller, buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     client.pause_contract();
     let hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
@@ -83,7 +83,7 @@ fn test_raise_dispute_blocked_when_paused() {
 fn test_resolve_dispute_blocked_when_paused() {
     let (env, _admin, seller, buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     let hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
     client.raise_dispute(&id, &Symbol::new(&env, "fraud"), &SorobanString::from_str(&env, "desc"), &hash);
@@ -96,7 +96,7 @@ fn test_resolve_dispute_blocked_when_paused() {
 fn test_auto_release_blocked_when_paused() {
     let (env, _admin, seller, buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &1_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &1_u64);
     client.fund_escrow(&id, &buyer);
     env.ledger().set_timestamp(DISPUTE_WINDOW + 10);
     client.pause_contract();
@@ -117,7 +117,7 @@ fn test_withdraw_fees_blocked_when_paused() {
 fn test_read_only_views_work_while_paused() {
     let (env, _admin, seller, _buyer, resolver, token, contract_id) = base_env();
     let client = EscrowClient::new(&env, &contract_id);
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.pause_contract();
     let _ = client.get_escrow(&id);
     let _ = client.get_fee_config();
@@ -145,7 +145,7 @@ fn test_unpause_resumes_operations() {
     let client = EscrowClient::new(&env, &contract_id);
     client.pause_contract();
     client.unpause_contract();
-    let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     assert_eq!(client.get_escrow(&id).state, EscrowState::Funded);
 }

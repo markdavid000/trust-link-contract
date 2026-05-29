@@ -36,7 +36,7 @@ fn test_get_dispute_returns_accurate_data_after_raise() {
     client.initialize(&admin, &fee_collector, &0_i128);
 
     let amount = 1000_i128;
-    let id = client.create_escrow(&seller, &resolver, &token, &amount, &100_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &amount, &100_u32, &3600_u64);
 
     let sac = token::StellarAssetClient::new(&env, &token);
     sac.mint(&buyer, &amount);
@@ -80,7 +80,7 @@ fn test_dispute_allowed_before_48h_boundary() {
     client.initialize(&admin, &fee_collector, &0_i128);
 
     let amount = 1000_i128;
-    let id = client.create_escrow(&seller, &resolver, &token, &amount, &100_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &amount, &100_u32, &3600_u64);
     
     let sac = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac.mint(&buyer, &amount);
@@ -113,7 +113,7 @@ fn test_dispute_allowed_exact_pre_boundary() {
     client.initialize(&admin, &fee_collector, &0_i128);
 
     let amount = 1000_i128;
-    let id = client.create_escrow(&seller, &resolver, &token, &amount, &100_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &amount, &100_u32, &3600_u64);
     
     let sac = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac.mint(&buyer, &amount);
@@ -151,7 +151,7 @@ fn test_dispute_rejected_exactly_at_48h() {
     client.initialize(&admin, &fee_collector, &0_i128);
 
     let amount = 1000_i128;
-    let id = client.create_escrow(&seller, &resolver, &token, &amount, &100_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &amount, &100_u32, &3600_u64);
     
     let sac = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac.mint(&buyer, &amount);
@@ -187,7 +187,7 @@ fn test_dispute_rejected_after_48h_deadline() {
     client.initialize(&admin, &fee_collector, &0_i128);
 
     let amount = 1000_i128;
-    let id = client.create_escrow(&seller, &resolver, &token, &amount, &100_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &amount, &100_u32, &3600_u64);
     
     let sac = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     sac.mint(&buyer, &amount);

@@ -39,7 +39,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_confirm_delivery() {
     mint(&env, &token, &buyer, 1);
 
     // MAX_FEE_BPS = 300 (3%) — still rounds to 0 on 1 stroop
-    let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + 172801);
@@ -62,7 +62,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_auto_release() {
 
     mint(&env, &token, &buyer, 1);
 
-    let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
 
     // Advance past dispute deadline (172800s) + shipping window (3600s)
@@ -85,7 +85,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_release() {
 
     mint(&env, &token, &buyer, 1);
 
-    let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     // raise_dispute must be called within the dispute window (< 172800s after funding)
     client.raise_dispute(
@@ -111,7 +111,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_refund() {
 
     mint(&env, &token, &buyer, 1);
 
-    let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
     // raise_dispute must be called within the dispute window (< 172800s after funding)
     client.raise_dispute(

@@ -47,7 +47,7 @@ fn test_withdraw_fees_after_multiple_escrows() {
 
     // Complete 3 escrows that each accrue 1% fees
     for _ in 0..3 {
-        let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &100_u32, &3600_u64);
+        let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1000_i128, &100_u32, &3600_u64);
         client.fund_escrow(&id, &buyer);
         env.ledger()
             .set_timestamp(env.ledger().timestamp() + 172801);

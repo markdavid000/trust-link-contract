@@ -277,6 +277,7 @@ impl Escrow {
     pub fn create_escrow(
         env: Env,
         seller: Address,
+        buyer: Option<Address>,
         resolver: Address,
         token: Address,
         amount: i128,
@@ -305,7 +306,7 @@ impl Escrow {
 
         let escrow = EscrowData {
             seller,
-            buyer: None,
+            buyer,
             resolver,
             token,
             amount,
@@ -341,7 +342,15 @@ impl Escrow {
             return Err(ContractError::InvalidState);
         }
 
-        escrow.seller.clone().require_auth();
+        // Allow either the seller or the named buyer to cancel a pending escrow.
+        // In Soroban the transaction is signed by exactly one invoker, so we
+        // check which party is authorising and require auth from that party.
+        if let Some(ref buyer) = escrow.buyer {
+            buyer.clone().require_auth();
+        } else {
+            escrow.seller.clone().require_auth();
+        }
+
         escrow.state = EscrowState::Canceled;
 
         save_escrow(&env, escrow_id, &escrow);
