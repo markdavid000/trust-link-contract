@@ -1,7 +1,10 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient, ContractError};
-use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env};
+use crate::{ContractError, Escrow, EscrowClient};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Address, Env,
+};
 
 fn setup_env() -> (Env, Address, Address, Address, Address, Address, Address) {
     let env = Env::default();
@@ -16,7 +19,15 @@ fn setup_env() -> (Env, Address, Address, Address, Address, Address, Address) {
 
     let token_address = env.register_stellar_asset_contract(token_admin.clone());
 
-    (env, admin, seller, buyer, resolver, token_address, fee_collector)
+    (
+        env,
+        admin,
+        seller,
+        buyer,
+        resolver,
+        token_address,
+        fee_collector,
+    )
 }
 
 fn mint_tokens(env: &Env, token: &Address, to: &Address, amount: i128) {
@@ -38,9 +49,8 @@ fn test_withdraw_fees_after_multiple_escrows() {
     for _ in 0..3 {
         let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &100_u32, &3600_u64);
         client.fund_escrow(&id, &buyer);
-        
-        // Advance time to allow confirm_delivery
-        env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + 172801);
         client.confirm_delivery(&id);
     }
 
@@ -55,5 +65,54 @@ fn test_withdraw_fees_after_multiple_escrows() {
     assert_eq!(token::Client::new(&env, &token).balance(&to), 30);
     // Second withdraw for same amount fails with InsufficientBalance
     let result2 = client.try_withdraw_fees(&token, &to, &30);
-    assert!(matches!(result2, Err(Ok(ContractError::InsufficientBalance))));
+    assert!(matches!(
+        result2,
+        Err(Ok(ContractError::InsufficientBalance))
+    ));
 }
+
+#[test]
+fn test_withdraw_fees_multiple_tokens() {
+    let (env, admin, seller, buyer, resolver, token_a, fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &fee_collector, &0_i128);
+
+    // Register a second token
+    let token_admin_b = Address::generate(&env);
+    let token_b = env.register_stellar_asset_contract(token_admin_b);
+
+    // Accrue fees for Token A (1000 amount, 1% fee = 10)
+    mint_tokens(&env, &token_a, &buyer, 1000);
+    let id_a = client.create_escrow(&seller, &resolver, &token_a, &1000_i128, &100_u32, &3600_u64);
+    client.fund_escrow(&id_a, &buyer);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    client.confirm_delivery(&id_a);
+
+    // Accrue fees for Token B (2000 amount, 2% fee = 40)
+    mint_tokens(&env, &token_b, &buyer, 2000);
+    let id_b = client.create_escrow(&seller, &resolver, &token_b, &2000_i128, &200_u32, &3600_u64);
+    client.fund_escrow(&id_b, &buyer);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    client.confirm_delivery(&id_b);
+
+    // Verify contract balances
+    assert_eq!(token::Client::new(&env, &token_a).balance(&contract_id), 10);
+    assert_eq!(token::Client::new(&env, &token_b).balance(&contract_id), 40);
+
+    let to = Address::generate(&env);
+
+    // Withdraw Token A
+    client.withdraw_fees(&token_a, &to, &10);
+    assert_eq!(token::Client::new(&env, &token_a).balance(&to), 10);
+    assert_eq!(token::Client::new(&env, &token_a).balance(&contract_id), 0);
+    // Token B balance should remain unchanged
+    assert_eq!(token::Client::new(&env, &token_b).balance(&contract_id), 40);
+
+    // Withdraw Token B
+    client.withdraw_fees(&token_b, &to, &40);
+    assert_eq!(token::Client::new(&env, &token_b).balance(&to), 40);
+    assert_eq!(token::Client::new(&env, &token_b).balance(&contract_id), 0);
+}
+

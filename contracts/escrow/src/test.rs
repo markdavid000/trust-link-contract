@@ -1,7 +1,10 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Bytes, Env, Symbol, String as SorobanString};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Address, Bytes, Env, String as SorobanString, Symbol,
+};
 
 fn make_evidence_hash(env: &Env) -> Bytes {
     Bytes::from_array(env, &[0u8; 32])
@@ -19,7 +22,15 @@ fn setup_env() -> (Env, Address, Address, Address, Address, Address, Address) {
 
     let token_address = env.register_stellar_asset_contract(token_admin.clone());
 
-    (env, seller, buyer, resolver, token_admin, token_address, fee_collector)
+    (
+        env,
+        seller,
+        buyer,
+        resolver,
+        token_admin,
+        token_address,
+        fee_collector,
+    )
 }
 
 fn mint_tokens(env: &Env, token: &Address, to: &Address, amount: i128) {
@@ -87,9 +98,10 @@ fn test_confirm_delivery() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    
+
     // Advance time to allow confirm_delivery
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 172801);
     client.confirm_delivery(&id);
 
     let escrow = client.get_escrow(&id);
@@ -112,7 +124,12 @@ fn test_raise_and_resolve_dispute_release_to_seller() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    client.raise_dispute(&id, &Symbol::new(&env, "reason"), &SorobanString::from_str(&env, "desc"), &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    client.raise_dispute(
+        &id,
+        &Symbol::new(&env, "reason"),
+        &SorobanString::from_str(&env, "desc"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
 
     client.resolve_dispute(&id, &ResolutionType::Release);
 
@@ -135,7 +152,12 @@ fn test_raise_and_resolve_dispute_refund_buyer() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    client.raise_dispute(&id, &Symbol::new(&env, "reason"), &SorobanString::from_str(&env, "desc"), &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    client.raise_dispute(
+        &id,
+        &Symbol::new(&env, "reason"),
+        &SorobanString::from_str(&env, "desc"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
     client.resolve_dispute(&id, &ResolutionType::Refund);
 
     let escrow = client.get_escrow(&id);
@@ -158,7 +180,8 @@ fn test_auto_release() {
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
 
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 172801);
     client.auto_release(&id);
 
     let escrow = client.get_escrow(&id);
@@ -205,8 +228,18 @@ fn test_raise_dispute_only_once() {
     mint_tokens(&env, &token, &buyer, 1000);
     let id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    client.raise_dispute(&id, &Symbol::new(&env, "reason"), &SorobanString::from_str(&env, "desc"), &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
-    let res = client.try_raise_dispute(&id, &Symbol::new(&env, "reason"), &SorobanString::from_str(&env, "desc"), &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    client.raise_dispute(
+        &id,
+        &Symbol::new(&env, "reason"),
+        &SorobanString::from_str(&env, "desc"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
+    let res = client.try_raise_dispute(
+        &id,
+        &Symbol::new(&env, "reason"),
+        &SorobanString::from_str(&env, "desc"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
     assert!(matches!(res, Err(Ok(ContractError::InvalidState))));
 }
 
@@ -222,6 +255,12 @@ fn test_multiple_escrows() {
     let id2 = client.create_escrow(&seller, &resolver, &token, &200_i128, &200_u32, &7200_u64);
     assert_eq!(id1, 1u64);
     assert_eq!(id2, 2u64);
+}
+
+fn register_alt_token(env: &Env) -> (Address, Address) {
+    let admin = Address::generate(env);
+    let token_address = env.register_stellar_asset_contract(admin.clone());
+    (token_address, admin)
 }
 
 #[test]
@@ -245,11 +284,14 @@ fn test_fund_and_confirm_delivery_with_non_usdc_token() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &fee_collector, &0_i128);
     mint_tokens(&env, &alt_token, &buyer, 1000);
-    let id = client.create_escrow(&seller, &resolver, &alt_token, &300_i128, &100_u32, &3600_u64);
+    let id = client.create_escrow(
+        &seller, &resolver, &alt_token, &300_i128, &100_u32, &3600_u64,
+    );
     client.fund_escrow(&id, &buyer);
-    
+
     // Advance time to allow confirm_delivery
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 172801);
     client.confirm_delivery(&id);
     // 1% fee on 300 = 3 kept in contract, 297 to seller
     assert_eq!(get_balance(&env, &alt_token, &seller), 297);
@@ -266,9 +308,10 @@ fn test_zero_fee_no_collector_transfer() {
     mint_tokens(&env, &token, &buyer, 1000);
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    
+
     // Advance time to allow confirm_delivery
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 172801);
     client.confirm_delivery(&id);
     assert_eq!(get_balance(&env, &token, &seller), 1000);
     assert_eq!(get_balance(&env, &token, &contract_id), 0);
@@ -312,12 +355,17 @@ fn test_dispute_before_deadline_succeeds() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time to 47h59m after funding (172740 seconds = 48*3600 - 60)
     env.ledger().set_timestamp(funded_at + 172740);
 
     // Dispute should succeed
-    client.raise_dispute(&id, &Symbol::new(&env, "reason"), &SorobanString::from_str(&env, "desc"), &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    client.raise_dispute(
+        &id,
+        &Symbol::new(&env, "reason"),
+        &SorobanString::from_str(&env, "desc"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
 
     let escrow = client.get_escrow(&id);
     assert_eq!(escrow.state, EscrowState::Disputed);
@@ -339,12 +387,17 @@ fn test_dispute_after_deadline_fails() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time to 48h after funding (172800 seconds = 48*3600)
     env.ledger().set_timestamp(funded_at + 172800);
 
     // Dispute should fail with DisputeWindowClosed
-    let res = client.try_raise_dispute(&id, &Symbol::new(&env, "reason"), &SorobanString::from_str(&env, "desc"), &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    let res = client.try_raise_dispute(
+        &id,
+        &Symbol::new(&env, "reason"),
+        &SorobanString::from_str(&env, "desc"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
     assert!(matches!(res, Err(Ok(ContractError::DisputeWindowClosed))));
 }
 
@@ -364,7 +417,7 @@ fn test_auto_release_after_dispute_deadline() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time past both dispute deadline (48h) and shipping window (1h)
     env.ledger().set_timestamp(funded_at + 172800 + 3600);
 
@@ -393,17 +446,11 @@ fn test_auto_release_before_dispute_deadline_fails() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time past shipping window (1h) but before dispute deadline (48h)
     env.ledger().set_timestamp(funded_at + 3600);
 
     // Auto-release should fail because dispute window is still open
     let res = client.try_auto_release(&id);
     assert!(matches!(res, Err(Ok(ContractError::DisputeWindowClosed))));
-}
-
-fn register_alt_token(env: &Env) -> (Address, Address) {
-    let admin = Address::generate(env);
-    let token_address = env.register_stellar_asset_contract(admin.clone());
-    (token_address, admin)
 }
