@@ -43,6 +43,8 @@ pub enum DataKey {
 pub enum ResolutionType {
     Release = 0,
     Refund = 1,
+}
+
 const DISPUTE_WINDOW: u64 = 172_800;
 const DEFAULT_TTL_EXTENSION: u32 = 120_960;
 
@@ -120,6 +122,8 @@ pub enum ContractError {
     ArithmeticError = 12,
     DisputeWindowClosed = 13,
     Paused = 14,
+}
+
 fn get_ttl_extension(env: &Env) -> u32 {
     env.storage()
         .instance()
@@ -316,8 +320,6 @@ impl Escrow {
         Ok(())
     }
 
-    pub fn withdraw_fees(env: Env, token: Address, to: Address, amount: i128) -> Result<(), ContractError> {
-        check_not_paused(&env)?;
     pub fn withdraw_fees(
         env: Env,
         caller: Address,
@@ -362,7 +364,6 @@ impl Escrow {
         fee_bps: u32,
         shipping_window: u64,
     ) -> Result<u64, ContractError> {
-        check_not_paused(&env)?;
         // SECURITY:
         // Authenticate before any state reads.
         seller.require_auth();
@@ -440,7 +441,6 @@ impl Escrow {
     }
 
     pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
-        check_not_paused(&env)?;
         // SECURITY:
         // Authenticate before any state reads.
         buyer.require_auth();
@@ -494,9 +494,6 @@ impl Escrow {
         Ok(())
     }
 
-    pub fn confirm_delivery(env: Env, escrow_id: u64) -> Result<(), ContractError> {
-        check_not_paused(&env)?;
-        let escrow: EscrowData = env
     /// Admin oracle records delivery timestamp. Only callable from Shipped state.
     pub fn record_delivery(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
         // SECURITY:
@@ -565,12 +562,6 @@ impl Escrow {
         description: soroban_sdk::String,
         evidence_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), ContractError> {
-        check_not_paused(&env)?;
-        let escrow: EscrowData = env
-            .storage()
-            .instance()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
         // SECURITY:
         // Authenticate before any state reads.
         caller.require_auth();
@@ -858,6 +849,7 @@ mod test_resolution;
 mod test_pause;
 mod test_overflow;
 mod test_fee_minimum;
+mod test_fee_calculation_accuracy;
 mod test_arbitration_fee;
 mod test_pause;
 mod test_helpers;
