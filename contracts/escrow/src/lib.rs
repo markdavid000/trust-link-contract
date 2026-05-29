@@ -836,3 +836,6 @@ mod test_delivery;
 mod test_auth_ordering;
 mod test_dispute_flow;
 mod test_set_fee_boundary;
+mod test_cancel_restrictions;
+mod test_dispute_window;
+mod test_unauthorized;
