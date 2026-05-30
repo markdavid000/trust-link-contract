@@ -48,7 +48,7 @@ fn test_get_dispute_returns_accurate_data_after_raise() {
     let evidence_hash = BytesN::from_array(&env, &[0xab; 32]);
     let timestamp = env.ledger().timestamp();
 
-    client.raise_dispute(&id, &reason, &description, &evidence_hash);
+    client.raise_dispute(&buyer, &id, &reason, &description, &evidence_hash);
 
     let result = client.get_dispute(&id);
 
@@ -102,7 +102,7 @@ fn test_dispute_allowed_before_48h_boundary() {
     let description = soroban_sdk::String::from_str(&env, "desc");
     let evidence_hash = soroban_sdk::BytesN::from_array(&env, &[0xab; 32]);
     
-    client.raise_dispute(&id, &reason, &description, &evidence_hash);
+    client.raise_dispute(&buyer, &id, &reason, &description, &evidence_hash);
     let result = client.get_dispute(&id);
     assert!(result.is_some());
     let result = result.unwrap();
@@ -142,7 +142,7 @@ fn test_dispute_allowed_exact_pre_boundary() {
     // However, the exact 48-hour boundary logically extends through T + 172799, only
     // failing at T + 172800. We align with the logical mathematical boundary 
     // to preserve existing contract correctness.
-    client.raise_dispute(&id, &reason, &description, &evidence_hash);
+    client.raise_dispute(&buyer, &id, &reason, &description, &evidence_hash);
     let result = client.get_dispute(&id);
     assert!(result.is_some());
     let result = result.unwrap();
@@ -177,7 +177,7 @@ fn test_dispute_rejected_exactly_at_48h() {
     let description = soroban_sdk::String::from_str(&env, "desc");
     let evidence_hash = soroban_sdk::BytesN::from_array(&env, &[0xab; 32]);
     
-    let result = client.try_raise_dispute(&id, &reason, &description, &evidence_hash);
+    let result = client.try_raise_dispute(&buyer, &id, &reason, &description, &evidence_hash);
     assert_eq!(result, Err(Ok(crate::ContractError::DisputeWindowClosed)));
     
     // Verify no state mutation on expired action
@@ -213,7 +213,7 @@ fn test_dispute_rejected_after_48h_deadline() {
     let description = soroban_sdk::String::from_str(&env, "desc");
     let evidence_hash = soroban_sdk::BytesN::from_array(&env, &[0xab; 32]);
     
-    let result = client.try_raise_dispute(&id, &reason, &description, &evidence_hash);
+    let result = client.try_raise_dispute(&buyer, &id, &reason, &description, &evidence_hash);
     assert_eq!(result, Err(Ok(crate::ContractError::DisputeWindowClosed)));
     
     // Verify no state mutation on expired action

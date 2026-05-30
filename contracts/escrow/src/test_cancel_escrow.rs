@@ -27,7 +27,7 @@ fn test_cancel_escrow_by_vendor_in_pending_state() {
     assert_eq!(escrow_before.state, EscrowState::Pending);
 
     // Vendor (seller) cancels the unfunded escrow
-    client.cancel_escrow(&id);
+    client.cancel_escrow(&seller, &id);
 
     let escrow_after = client.get_escrow(&id);
     assert_eq!(escrow_after.state, EscrowState::Cancelled);
@@ -53,7 +53,7 @@ fn test_cancel_escrow_returns_funds_if_buyer_present() {
     client.fund_escrow(&id, &buyer);
 
     // cancel_escrow requires Pending state — after funding it's Funded, so this must error
-    let res = client.try_cancel_escrow(&id);
+    let res = client.try_cancel_escrow(&seller, &id);
     assert!(matches!(res, Err(Ok(ContractError::InvalidState))));
 
     // Buyer balance is still locked (no refund happened)
@@ -81,7 +81,7 @@ fn test_cancel_escrow_non_pending_fails() {
     client.fund_escrow(&id, &buyer);
 
     // Escrow is now Funded — cancel must be rejected
-    let res = client.try_cancel_escrow(&id);
+    let res = client.try_cancel_escrow(&seller, &id);
     assert!(matches!(res, Err(Ok(ContractError::InvalidState))));
 
     let escrow = client.get_escrow(&id);

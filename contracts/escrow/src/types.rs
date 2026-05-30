@@ -68,6 +68,7 @@ pub enum ContractError {
     ArithmeticOverflow = 15,
     InvalidStateTransition = 16,
     InputTooLong = 17,
+    InvalidTrackingId = 18,
 }
 
 /// Lifecycle states of an escrow transaction.
@@ -111,6 +112,8 @@ pub struct EscrowData {
     pub funded_at: u64,
     pub dispute_deadline: u64,
     pub state: EscrowState,
+    /// Ledger timestamp recorded when the seller marked the order as shipped.
+    pub shipped_at: u64,
     /// Ledger timestamp recorded by the admin oracle when delivery is confirmed. Zero until set.
     pub delivered_at: u64,
     pub tracking_id: Option<String>,

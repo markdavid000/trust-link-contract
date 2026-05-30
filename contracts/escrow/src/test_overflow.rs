@@ -42,6 +42,7 @@ fn test_fee_calculation_max_escrow_amount() {
     let client = super::EscrowClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &fee_collector, &0_u32);
+    client.set_protocol_fee(&admin, &300_u32);
 
     let amount = MAX_ESCROW_AMOUNT;
     let fee_bps = 300; // 3%
@@ -51,11 +52,10 @@ fn test_fee_calculation_max_escrow_amount() {
     mint_tokens(&env, &token, &buyer, amount);
     client.fund_escrow(&id, &buyer);
 
-    // Set ledger time to after dispute deadline to allow confirm_delivery
-    env.ledger().set_timestamp(172800 + 1);
+    client.mark_shipped(&seller, &id, &soroban_sdk::String::from_str(&env, "TRACK-MAX"));
 
     // This should not panic because of split calculation
-    client.confirm_delivery(&id);
+    client.confirm_delivery(&buyer, &id);
 
     let escrow = client.get_escrow(&id);
     assert_eq!(escrow.state, EscrowState::Completed);
@@ -65,7 +65,8 @@ fn test_fee_calculation_max_escrow_amount() {
 
     let tc = soroban_sdk::token::Client::new(&env, &token);
     assert_eq!(tc.balance(&seller), expected_net);
-    assert_eq!(tc.balance(&contract_id), expected_fee);
+    assert_eq!(tc.balance(&fee_collector), expected_fee);
+    assert_eq!(tc.balance(&contract_id), 0);
 }
 
 #[test]
@@ -75,7 +76,7 @@ fn test_create_escrow_amount_exceeds_maximum() {
     let contract_id = env.register(Escrow, ());
     let client = super::EscrowClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin, &fee_collector, &0_i128);
+    client.initialize(&admin, &fee_collector, &0_u32);
 
     let amount = MAX_ESCROW_AMOUNT + 1;
     let res = client.try_create_escrow(&seller, &resolver, &token, &amount, &300, &3600_u64);

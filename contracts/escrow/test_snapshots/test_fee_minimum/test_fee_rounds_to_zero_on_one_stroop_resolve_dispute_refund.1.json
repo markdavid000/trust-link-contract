@@ -135,6 +135,9 @@
               "function_name": "raise_dispute",
               "args": [
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
                   "u64": "1"
                 },
                 {
@@ -162,6 +165,9 @@
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
               "function_name": "resolve_dispute",
               "args": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
                 {
                   "u64": "1"
                 },
@@ -505,6 +511,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "shipped_at"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "shipping_window"
                     },
                     "val": {
@@ -576,18 +590,6 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "ArbitrationFee"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "i128": "0"
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "EscrowCounter"
                           }
                         ]
@@ -606,6 +608,35 @@
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "FeeConfig"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "arbitration_fee_bps"
+                            },
+                            "val": {
+                              "u32": 0
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "protocol_fee_bps"
+                            },
+                            "val": {
+                              "u32": 0
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -633,6 +664,42 @@
                       },
                       "val": {
                         "i128": "0"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "TotalCreated"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u64": "1"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "TotalDisputed"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u64": "1"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "TotalRefunded"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u64": "1"
                       }
                     }
                   ]

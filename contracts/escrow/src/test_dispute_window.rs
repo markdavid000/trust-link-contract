@@ -35,7 +35,7 @@ fn setup_funded_and_shipped() -> Fx {
 
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-    client.initialize(&admin, &fee_collector, &0_i128);
+    client.initialize(&admin, &fee_collector, &0_u32);
 
     let amount: i128 = 1_000;
     let escrow_id = client.create_escrow(&seller, &resolver, &token_addr, &amount, &0_u32, &0_u64);
