@@ -562,6 +562,17 @@ impl Escrow {
         token_client.transfer(&buyer, &env.current_contract_address(), &escrow.amount);
 
         save_escrow(&env, escrow_id, &escrow);
+
+        let mut buyer_escrows: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
+            .unwrap_or(Vec::new(&env));
+        buyer_escrows.push_back(escrow_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BuyerEscrowIndex(buyer.clone()), &buyer_escrows);
+
         emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
         Ok(())
     }
@@ -886,23 +897,10 @@ impl Escrow {
     }
 
     pub fn get_escrows_by_buyer(env: Env, buyer: Address) -> Vec<u64> {
-        let mut result = Vec::new(&env);
-        let current_counter: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::EscrowCounter)
-            .unwrap_or(1);
-
-        for i in 1..current_counter {
-            if let Ok(escrow) = load_escrow(&env, i) {
-                if let Some(b) = escrow.buyer {
-                    if b == buyer {
-                        result.push_back(i);
-                    }
-                }
-            }
-        }
-        result
+        env.storage()
+            .persistent()
+            .get(&DataKey::BuyerEscrowIndex(buyer))
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Returns the current fee configuration as a read-only view.
