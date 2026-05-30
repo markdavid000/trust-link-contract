@@ -116,7 +116,7 @@ fn test_sep41_auto_release() {
     env.mock_all_auths();
 
     let token = register_sep41_token(&env);
-    let (contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+    let (contract_id, client, admin, _fee_collector) = setup_contract(&env);
 
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
@@ -126,9 +126,13 @@ fn test_sep41_auto_release() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-AUTO"));
+    env.ledger().set_timestamp(1_700_000_000);
+    client.record_delivery(&admin, &id);
 
-    // Advance past dispute deadline (172800s) + shipping window (3600s)
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172_800 + 3_601);
+    // Advance 48 hours past delivery.
+    let escrow = client.get_escrow(&id);
+    env.ledger().set_timestamp(escrow.delivered_at + 172_801);
     client.auto_release(&id);
 
     assert!(has_event::<crate::AutoReleased, _>(&env, &contract_id, "auto_released", |event| {
@@ -156,6 +160,7 @@ fn test_sep41_dispute_and_refund() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &800_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-DISPUTE"));
 
     client.raise_dispute(
         &buyer,

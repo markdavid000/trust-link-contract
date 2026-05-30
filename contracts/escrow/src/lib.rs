@@ -30,6 +30,7 @@ const MAX_FEE_BPS: u32 = 300;
 pub const MIN_ESCROW_AMOUNT: i128 = 1;
 
 const DISPUTE_WINDOW: u64 = 172_800;
+const DELIVERY_RELEASE_WINDOW: u64 = 172_800;
 const DEFAULT_TTL_EXTENSION: u32 = 120_960;
 
 /// Maximum length for user-supplied string fields.
@@ -54,17 +55,16 @@ pub fn transition_state(
     to: &EscrowState,
 ) -> Result<(), ContractError> {
     use EscrowState::*;
-    let allowed = matches!(
-        (from, to),
-        (Pending, Funded)
-            | (Pending, Canceled)
-            | (Funded, Shipped)
-            | (Funded, Disputed)
-            | (Funded, Completed)
-            | (Funded, Refunded)
-            | (Shipped, Completed)
-            | (Shipped, Disputed)
-            | (Shipped, Refunded)
+        let allowed = matches!(
+            (from, to),
+            (Pending, Funded)
+                | (Pending, Canceled)
+                | (Funded, Shipped)
+                | (Funded, Completed)
+                | (Funded, Refunded)
+                | (Shipped, Completed)
+                | (Shipped, Disputed)
+                | (Shipped, Refunded)
             | (Disputed, Completed)
             | (Disputed, Refunded)
     );
@@ -652,11 +652,8 @@ impl Escrow {
             return Err(ContractError::NotAuthorized);
         }
 
-        if escrow.state != EscrowState::Funded && escrow.state != EscrowState::Shipped {
+        if escrow.state != EscrowState::Shipped {
             return Err(ContractError::InvalidState);
-        }
-        if env.ledger().timestamp() >= escrow.dispute_deadline {
-            return Err(ContractError::DisputeWindowClosed);
         }
 
         let mut updated = escrow;
@@ -672,7 +669,7 @@ impl Escrow {
             description,
             evidence_hash,
             status: DisputeStatus::Active,
-            raised_at: env.ledger().timestamp(),
+            disputed_at: env.ledger().timestamp(),
             tracking_id: updated.tracking_id.clone(),
         };
 
@@ -774,27 +771,60 @@ impl Escrow {
     }
 
     pub fn auto_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        let admin = require_admin(&env);
+        admin.require_auth();
+
         ensure_not_paused(&env)?;
         let escrow = load_escrow(&env, escrow_id)?;
 
-        if escrow.state != EscrowState::Funded && escrow.state != EscrowState::Shipped {
+        if escrow.state != EscrowState::Shipped {
             return Err(ContractError::InvalidState);
         }
-        if env.ledger().timestamp() < escrow.dispute_deadline {
-            return Err(ContractError::DisputeWindowClosed);
+
+        if escrow.delivered_at == 0 {
+            return Err(ContractError::InvalidState);
         }
-        if env.ledger().timestamp() < escrow.funded_at + escrow.shipping_window {
+
+        let eligible_at = escrow
+            .delivered_at
+            .checked_add(DELIVERY_RELEASE_WINDOW)
+            .ok_or(ContractError::ArithmeticError)?;
+        if env.ledger().timestamp() < eligible_at {
             return Err(ContractError::ShippingWindowNotElapsed);
         }
 
-        deduct_and_transfer(&env, &escrow.token, &escrow.seller, escrow.amount, escrow.fee_bps)?;
+        if load_dispute(&env, escrow_id).is_ok() {
+            return Err(ContractError::InvalidState);
+        }
+
+        let fee_config = read_fee_config(&env);
+        let fee_collector: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeCollector)
+            .expect("fee collector not set");
+
+        transfer_with_protocol_fee(
+            &env,
+            &escrow.token,
+            &escrow.seller,
+            &fee_collector,
+            escrow.amount,
+            fee_config.protocol_fee_bps,
+        )?;
 
         let mut updated = escrow;
         updated.state = EscrowState::Completed;
 
         save_escrow(&env, escrow_id, &updated);
         increment_counter(&env, &DataKey::TotalCompleted)?;
-        emit_auto_released(&env, escrow_id, updated.seller.clone(), updated.amount, updated.fee_bps);
+        emit_auto_released(
+            &env,
+            escrow_id,
+            updated.seller.clone(),
+            updated.amount,
+            fee_config.protocol_fee_bps,
+        );
         Ok(())
     }
 

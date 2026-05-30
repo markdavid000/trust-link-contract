@@ -65,10 +65,13 @@ fn test_fee_rounds_to_zero_on_one_stroop_auto_release() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-FEE-AUTO"));
+    env.ledger().set_timestamp(1_700_000_000);
+    client.record_delivery(&admin, &id);
 
-    // Advance past dispute deadline (172800s) + shipping window (3600s)
-    env.ledger()
-        .set_timestamp(env.ledger().timestamp() + 172800 + 3600 + 1);
+    // Advance 48 hours past delivery.
+    let escrow = client.get_escrow(&id);
+    env.ledger().set_timestamp(escrow.delivered_at + 172_801);
     client.auto_release(&id);
 
     assert_eq!(balance(&env, &token, &seller), 1);
@@ -88,7 +91,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_release() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    // raise_dispute must be called within the dispute window (< 172800s after funding)
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-FEE-REL"));
     client.raise_dispute(
         &buyer,
         &id,
@@ -115,7 +118,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_refund() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    // raise_dispute must be called within the dispute window (< 172800s after funding)
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-FEE-REF"));
     client.raise_dispute(
         &buyer,
         &id,

@@ -83,5 +83,5 @@ export interface DisputeData {
   description: string;
   evidence_hash: Bytes32;
   status: DisputeStatus;
-  raised_at: bigint;
+  disputed_at: bigint;
 }

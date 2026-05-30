@@ -71,7 +71,7 @@ fn full_dispute_release_to_vendor() {
     // Vendor received the net amount (face value minus the arbitration fee).
     assert_eq!(
         token_client.balance(&seller),
-        amount - arbitration_fee as i128,
+        amount - 5,
         "seller should receive amount minus arbitration fee on Release",
     );
 

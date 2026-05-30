@@ -143,10 +143,12 @@ fn test_addition_overflow_shipping_window() {
     mint_tokens(&env, &token, &buyer, amount);
     
     let escrow_id = client.create_escrow(&seller, &resolver, &token, &amount, &300, &u64::MAX);
-    env.ledger().set_timestamp(1000);
     client.fund_escrow(&escrow_id, &buyer);
-    
-    env.ledger().set_timestamp(173801);
+    client.mark_shipped(&seller, &escrow_id, &soroban_sdk::String::from_str(&env, "TRACK-OVERFLOW"));
+    env.ledger().set_timestamp(u64::MAX - 10);
+    client.record_delivery(&admin, &escrow_id);
+
+    env.ledger().set_timestamp(u64::MAX - 1);
     let res = client.try_auto_release(&escrow_id);
     assert_eq!(res, Err(Ok(ContractError::ArithmeticOverflow)));
 }

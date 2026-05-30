@@ -35,7 +35,7 @@ pub struct DisputeData {
     pub description: String,
     pub evidence_hash: BytesN<32>,
     pub status: DisputeStatus,
-    pub raised_at: u64,
+    pub disputed_at: u64,
     pub tracking_id: Option<String>,
 }
 

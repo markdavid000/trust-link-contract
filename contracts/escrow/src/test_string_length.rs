@@ -67,6 +67,7 @@ fn test_description_at_limit_succeeds() {
     let id = create_funded_escrow(&env, &client, &seller, &buyer, &resolver, &token, 100, 0, 3600);
     // Exactly MAX_DESCRIPTION_LEN characters — must succeed
     let desc = make_string(&env, MAX_DESCRIPTION_LEN);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-DESC"));
     client.raise_dispute(
         &buyer,
         &id,
