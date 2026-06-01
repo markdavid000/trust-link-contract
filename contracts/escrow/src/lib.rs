@@ -17,6 +17,8 @@ pub struct EscrowData {
     pub amount: i128,
     pub shipping_window: u64,
     pub funded_at: u64,
+    pub shipped_at: u64,
+    pub created_at: u64,
     pub state: EscrowState,
 }
 
@@ -25,9 +27,11 @@ pub struct EscrowData {
 pub enum EscrowState {
     Pending,
     Funded,
+    Shipped,
     Completed,
     Disputed,
     Refunded,
+    Cancelled,
 }
 
 #[contract]
@@ -61,6 +65,8 @@ impl Escrow {
             amount,
             shipping_window,
             funded_at: 0,
+            shipped_at: 0,
+            created_at: env.ledger().timestamp(),
             state: EscrowState::Pending,
         };
 
@@ -99,7 +105,7 @@ impl Escrow {
         env.events().publish(("fund_escrow",), escrow_id);
     }
 
-    pub fn confirm_delivery(env: Env, escrow_id: u32) {
+    pub fn mark_shipped(env: Env, escrow_id: u32) {
         let escrow: EscrowData = env
             .storage()
             .instance()
@@ -107,6 +113,26 @@ impl Escrow {
             .expect("escrow not found");
 
         assert!(escrow.state == EscrowState::Funded, "escrow not funded");
+        escrow.seller.require_auth();
+
+        let mut updated = escrow;
+        updated.state = EscrowState::Shipped;
+        updated.shipped_at = env.ledger().timestamp();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Escrow(escrow_id), &updated);
+        env.events().publish(("mark_shipped",), escrow_id);
+    }
+
+    pub fn confirm_delivery(env: Env, escrow_id: u32) {
+        let escrow: EscrowData = env
+            .storage()
+            .instance()
+            .get(&DataKey::Escrow(escrow_id))
+            .expect("escrow not found");
+
+        assert!(escrow.state == EscrowState::Shipped, "escrow not shipped");
 
         let buyer = escrow.buyer.clone().expect("escrow has no buyer");
         buyer.require_auth();
@@ -134,7 +160,11 @@ impl Escrow {
             .get(&DataKey::Escrow(escrow_id))
             .expect("escrow not found");
 
-        assert!(escrow.state == EscrowState::Funded, "escrow not funded");
+        assert!(
+            escrow.state == EscrowState::Funded
+                || escrow.state == EscrowState::Shipped,
+            "escrow not in disputable state"
+        );
 
         let buyer = escrow.buyer.clone().expect("escrow has no buyer");
         buyer.require_auth();
@@ -195,9 +225,9 @@ impl Escrow {
             .get(&DataKey::Escrow(escrow_id))
             .expect("escrow not found");
 
-        assert!(escrow.state == EscrowState::Funded, "escrow not funded");
+        assert!(escrow.state == EscrowState::Shipped, "escrow not shipped");
         assert!(
-            env.ledger().timestamp() >= escrow.funded_at + escrow.shipping_window,
+            env.ledger().timestamp() >= escrow.shipped_at + escrow.shipping_window,
             "shipping window not elapsed"
         );
 
@@ -215,6 +245,25 @@ impl Escrow {
             .instance()
             .set(&DataKey::Escrow(escrow_id), &updated);
         env.events().publish(("auto_release",), escrow_id);
+    }
+
+    pub fn cancel_escrow(env: Env, escrow_id: u32) {
+        let escrow: EscrowData = env
+            .storage()
+            .instance()
+            .get(&DataKey::Escrow(escrow_id))
+            .expect("escrow not found");
+
+        assert!(escrow.state == EscrowState::Pending, "escrow not pending");
+        escrow.seller.require_auth();
+
+        let mut updated = escrow;
+        updated.state = EscrowState::Cancelled;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Escrow(escrow_id), &updated);
+        env.events().publish(("cancel_escrow",), escrow_id);
     }
 
     pub fn get_escrow(env: Env, escrow_id: u32) -> EscrowData {

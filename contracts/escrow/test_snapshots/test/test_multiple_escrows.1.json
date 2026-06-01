@@ -394,6 +394,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "created_at"
+                            },
+                            "val": {
+                              "u64": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "funded_at"
                             },
                             "val": {
@@ -414,6 +422,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "shipped_at"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {
@@ -478,6 +494,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "created_at"
+                            },
+                            "val": {
+                              "u64": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "funded_at"
                             },
                             "val": {
@@ -498,6 +522,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "shipped_at"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {
