@@ -13,9 +13,9 @@ fn test_get_public_config() {
 
     let admin = Address::generate(&env);
     let fee_collector = Address::generate(&env);
-    let arbitration_fee = 500_0000000;
+    let arbitration_fee_bps = 500;
 
-    client.initialize(&admin, &fee_collector, &arbitration_fee);
+    client.initialize(&admin, &fee_collector, &arbitration_fee_bps);
 
     let mut public = client.get_public_config();
     assert_eq!(public.fee_bps, 0);
@@ -26,6 +26,12 @@ fn test_get_public_config() {
     public = client.get_public_config();
     assert_eq!(public.fee_bps, 150);
 
+    // Update fee and check again
+    client.set_protocol_fee(&admin, &150);
+    config = client.get_contract_config();
+    assert_eq!(config.fee_bps, 150);
+    
+    // Create an escrow to increment the counter
     let seller = Address::generate(&env);
     let resolver = Address::generate(&env);
     let token = Address::generate(&env);
