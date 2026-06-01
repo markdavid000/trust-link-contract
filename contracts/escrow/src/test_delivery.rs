@@ -190,6 +190,77 @@ fn test_confirm_delivery_after_mark_shipped() {
     let _ = contract_id;
 }
 
+#[test]
+fn test_confirm_delivery_by_vendor_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let token = register_token(&env);
+    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let resolver = Address::generate(&env);
+
+    let id = create_funded_escrow(
+        &env,
+        &client,
+        &seller,
+        &buyer,
+        &resolver,
+        &token,
+        1000,
+        0,
+        3600,
+    );
+
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-004"));
+
+    let escrow = client.get_escrow(&id);
+    env.ledger().set_timestamp(escrow.dispute_deadline + 1);
+
+    assert_eq!(
+        client.try_confirm_delivery(&seller, &id),
+        Err(Ok(ContractError::NotAuthorized)),
+    );
+}
+
+#[test]
+fn test_confirm_delivery_by_third_party_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let token = register_token(&env);
+    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let intruder = Address::generate(&env);
+
+    let id = create_funded_escrow(
+        &env,
+        &client,
+        &seller,
+        &buyer,
+        &resolver,
+        &token,
+        1000,
+        0,
+        3600,
+    );
+
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-005"));
+
+    let escrow = client.get_escrow(&id);
+    env.ledger().set_timestamp(escrow.dispute_deadline + 1);
+
+    assert_eq!(
+        client.try_confirm_delivery(&intruder, &id),
+        Err(Ok(ContractError::NotAuthorized)),
+    );
+}
+
 /// Tests that record_delivery records the exact timestamp from the current ledger.
 /// This verifies that the delivered_at value matches the environment's timestamp
 /// precisely at the moment of invocation with no offset or modification.

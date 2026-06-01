@@ -660,6 +660,9 @@ impl Escrow {
         caller: Address,
         escrow_id: u64,
     ) -> Result<(), ContractError> {
+        // Authenticate before reading escrow state or performing any transfers.
+        // This guarantees the buyer authorization check applies even if future
+        // state branches are added here.
         caller.require_auth();
 
         ensure_not_paused(&env)?;
