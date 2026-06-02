@@ -567,11 +567,8 @@ impl Escrow {
 
         let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
         vendor_escrows.push_back(escrow_id);
+        // write_vendor_escrow_index now handles TTL extension automatically
         storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
-
-        let ext = get_ttl_extension(&env);
-        let index_key = storage::StorageKey::VendorEscrowIndex(escrow.seller.clone());
-        env.storage().persistent().extend_ttl(&index_key, ext / 2, ext);
 
         increment_counter(&env, &DataKey::TotalCreated)?;
         emit_escrow_created(
@@ -612,9 +609,12 @@ impl Escrow {
             .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
             .unwrap_or(Vec::new(&env));
         buyer_escrows.push_back(escrow_id);
+        let buyer_index_key = DataKey::BuyerEscrowIndex(buyer.clone());
         env.storage()
             .persistent()
-            .set(&DataKey::BuyerEscrowIndex(buyer.clone()), &buyer_escrows);
+            .set(&buyer_index_key, &buyer_escrows);
+        let ext = get_ttl_extension(&env);
+        env.storage().persistent().extend_ttl(&buyer_index_key, ext / 2, ext);
 
         emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
         Ok(())
