@@ -599,8 +599,6 @@ impl Escrow {
         if env.ledger().timestamp() < escrow.dispute_deadline {
             return Err(ContractError::DisputeWindowClosed);
         }
-
-        let fee_config = read_fee_config(&env);
         let fee_collector: Address = env
             .storage()
             .instance()
@@ -613,7 +611,7 @@ impl Escrow {
             &escrow.seller,
             &fee_collector,
             escrow.amount,
-            fee_config.protocol_fee_bps,
+            escrow.fee_bps,
         )?;
 
         escrow.state = EscrowState::Completed;
@@ -624,7 +622,7 @@ impl Escrow {
             escrow_id,
             escrow.seller.clone(),
             escrow.amount,
-            fee_config.protocol_fee_bps,
+            escrow.fee_bps,
         );
         Ok(())
     }
@@ -806,7 +804,6 @@ impl Escrow {
             return Err(ContractError::InvalidState);
         }
 
-        let fee_config = read_fee_config(&env);
         let fee_collector: Address = env
             .storage()
             .instance()
@@ -819,7 +816,7 @@ impl Escrow {
             &escrow.seller,
             &fee_collector,
             escrow.amount,
-            fee_config.protocol_fee_bps,
+            escrow.fee_bps,
         )?;
 
         escrow.state = EscrowState::Completed;
@@ -830,7 +827,7 @@ impl Escrow {
             escrow_id,
             escrow.seller.clone(),
             escrow.amount,
-            fee_config.protocol_fee_bps,
+            escrow.fee_bps,
         );
         Ok(())
     }
@@ -951,3 +948,4 @@ mod test_dispute_window;
 mod test_unauthorized;
 mod test_concurrent_vendor_escrows;
 mod test_dispute_deadline_fallback;
+mod test_fee_snapshot;
