@@ -8,15 +8,15 @@ pub mod storage;
 pub mod types;
 pub use crate::errors::ContractError;
 pub use crate::events::{
-    AdminRotated, AutoReleased, ContractPausedEvent, ContractUnpausedEvent, DeliveryRecorded,
-    DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted, EscrowCreated,
-    EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn, ArbitrationFeeUpdated,
-    ProtocolFeeUpdated,
-    emit_admin_rotated, emit_auto_released, emit_contract_paused, emit_contract_unpaused,
-    emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved, emit_escrow_cancelled,
-    emit_escrow_completed, emit_escrow_created, emit_escrow_funded, emit_escrow_shipped,
-    emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
-    emit_protocol_fee_updated,
+    AdminRotated, AutoReleased, ContractInitialized, ContractPausedEvent, ContractUnpausedEvent,
+    DeliveryRecorded, DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted,
+    EscrowCreated, EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn, ArbitrationFeeUpdated,
+    ProtocolFeeUpdated, ResolverRotated,
+    emit_admin_rotated, emit_auto_released, emit_contract_initialized, emit_contract_paused,
+    emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
+    emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
+    emit_escrow_shipped, emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
+    emit_protocol_fee_updated, emit_resolver_rotated,
 };
 pub use crate::types::{
     ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowData, EscrowState,
@@ -304,7 +304,7 @@ impl Escrow {
         arbitration_fee_bps: u32,
     ) -> Result<(), ContractError> {
         if env.storage().instance().has(&DataKey::Admin) {
-            panic!("already initialized");
+            return Err(ContractError::AlreadyInitialized);
         }
         if admin == fee_collector {
             return Err(ContractError::InvalidAddress);
@@ -318,9 +318,18 @@ impl Escrow {
         if admin == zero || fee_collector == zero {
             return Err(ContractError::InvalidAddress);
         }
+
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::DefaultFeeBps, &default_fee_bps);
-        env.storage().instance().set(&DataKey::EscrowCounter, &1_u32);
+        env.storage().instance().set(&DataKey::FeeCollector, &fee_collector);
+        env.storage().instance().set(&DataKey::FeeConfig, &FeeConfig {
+            protocol_fee_bps: 0,
+            arbitration_fee_bps,
+        });
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().set(&DataKey::EscrowCounter, &1_u64);
+
+        emit_contract_initialized(&env, admin, fee_collector, arbitration_fee_bps);
+        Ok(())
     }
 
     pub fn set_fee(env: Env, admin: Address, new_fee_bps: u32) {
@@ -427,6 +436,29 @@ impl Escrow {
         Ok(())
     }
 
+    pub fn set_fee_collector(env: Env, new_collector: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("contract not initialized");
+        admin.require_auth();
+
+        let old_collector: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeCollector)
+            .expect("fee collector not set");
+
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeCollector, &new_collector);
+        env.events().publish(
+            ("FeeCollectorUpdated",),
+            (old_collector, new_collector),
+        );
+    }
+
     pub fn create_escrow(
         env: Env,
         seller: Address,
@@ -524,10 +556,9 @@ impl Escrow {
         }
 
         escrow.state = EscrowState::Canceled;
-        env.storage().persistent().set(&DataKey::Escrow(counter), &escrow_data);
-        env.storage().instance().set(&DataKey::EscrowCounter, &(counter + 1));
-
-        counter
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &escrow);
+        emit_escrow_cancelled(&env, escrow_id, escrow.seller);
+        Ok(())
     }
 
     pub fn fund_escrow(env: Env, escrow_id: u32, buyer: Address) {
@@ -592,6 +623,8 @@ impl Escrow {
 
     pub fn get_escrow(env: Env, escrow_id: u32) -> EscrowData {
         env.storage().persistent().get(&DataKey::Escrow(escrow_id)).expect("Escrow instance data payload not found.")
+    }
+
     pub fn resolve_dispute(env: Env, caller: Address, escrow_id: u64, resolution: ResolutionType) -> Result<(), ContractError> {
         caller.require_auth();
         ensure_not_paused(&env)?;
@@ -842,6 +875,53 @@ impl Escrow {
     pub fn get_fee_config(env: Env) -> FeeConfig {
         read_fee_config(&env)
     }
+
+    /// Rotates the resolver for an escrow. Callable by the seller or admin.
+    /// New resolver must differ from current resolver, seller, and buyer.
+    pub fn rotate_resolver(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        new_resolver: Address,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        ensure_not_paused(&env)?;
+
+        let mut escrow = load_escrow(&env, escrow_id)?;
+        let admin = require_admin(&env);
+
+        if caller != escrow.seller && caller != admin {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        // Reject terminal states
+        let is_terminal = matches!(
+            escrow.state,
+            EscrowState::Completed | EscrowState::Refunded | EscrowState::Canceled
+        );
+        if is_terminal {
+            return Err(ContractError::InvalidState);
+        }
+
+        if new_resolver == escrow.resolver {
+            return Err(ContractError::SameAddress);
+        }
+
+        if new_resolver == escrow.seller {
+            return Err(ContractError::InvalidAddress);
+        }
+
+        if escrow.buyer.as_ref() == Some(&new_resolver) {
+            return Err(ContractError::InvalidAddress);
+        }
+
+        let old_resolver = escrow.resolver.clone();
+        escrow.resolver = new_resolver.clone();
+        save_escrow(&env, escrow_id, &escrow);
+
+        emit_resolver_rotated(&env, escrow_id, old_resolver, new_resolver);
+        Ok(())
+    }
 }
 
 mod test;
@@ -878,3 +958,4 @@ mod test_unauthorized;
 mod test_concurrent_vendor_escrows;
 mod test_not_found;
 mod test_get_escrows_by_vendor;
+mod test_resolver_rotation;

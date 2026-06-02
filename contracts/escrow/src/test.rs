@@ -909,3 +909,38 @@ fn test_event_integrity_full_lifecycle_all_events_decoded() {
         ev.escrow_id == id2 as u64 && ev.resolution == ResolutionType::Refund
     }));
 }
+
+#[test]
+fn test_set_fee_collector_routes_fees_to_new_address() {
+    let (env, seller, buyer, resolver, _admin, token, old_collector) = setup_env();
+    let new_collector = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let contract_id = env.register(Escrow, ());
+    let client = super::EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &old_collector);
+
+    mint_tokens(&env, &token, &buyer, 4000);
+
+    let id1 = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
+    client.fund_escrow(&id1, &buyer);
+
+    let escrow = client.get_escrow(&id1);
+    env.ledger().set_timestamp(escrow.dispute_deadline + 1);
+    client.confirm_delivery(&id1);
+
+    assert_eq!(get_balance(&env, &token, &old_collector), 20);
+    assert_eq!(get_balance(&env, &token, &new_collector), 0);
+
+    client.set_fee_collector(&new_collector);
+
+    let id2 = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
+    client.fund_escrow(&id2, &buyer);
+
+    let escrow2 = client.get_escrow(&id2);
+    env.ledger().set_timestamp(escrow2.dispute_deadline + 1);
+    client.confirm_delivery(&id2);
+
+    assert_eq!(get_balance(&env, &token, &old_collector), 20);
+    assert_eq!(get_balance(&env, &token, &new_collector), 20);
+}
