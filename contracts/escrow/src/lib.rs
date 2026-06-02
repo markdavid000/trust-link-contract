@@ -192,6 +192,18 @@ fn save_escrow(env: &Env, id: u64, escrow: &EscrowData) {
     env.storage().persistent().extend_ttl(&key, ext / 2, ext);
 }
 
+fn push_buyer_escrow(env: &Env, buyer: &Address, escrow_id: u64) {
+    let mut buyer_escrows: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
+        .unwrap_or(Vec::new(env));
+    buyer_escrows.push_back(escrow_id);
+    env.storage()
+        .persistent()
+        .set(&DataKey::BuyerEscrowIndex(buyer.clone()), &buyer_escrows);
+}
+
 fn load_escrow(env: &Env, id: u64) -> Result<EscrowData, ContractError> {
     let key = DataKey::Escrow(id);
     let escrow: EscrowData = env
@@ -599,16 +611,7 @@ impl Escrow {
         token_client.transfer(escrow_buyer, &env.current_contract_address(), &escrow.amount);
 
         save_escrow(&env, escrow_id, &escrow);
-
-        let mut buyer_escrows: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
-            .unwrap_or(Vec::new(&env));
-        buyer_escrows.push_back(escrow_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::BuyerEscrowIndex(buyer.clone()), &buyer_escrows);
+        push_buyer_escrow(&env, &buyer, escrow_id);
 
         emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
         emit_escrow_funded(&env, escrow_id, escrow_buyer.clone(), escrow.amount);
@@ -949,10 +952,10 @@ impl Escrow {
     }
 
     pub fn get_escrows_by_buyer(env: Env, buyer: Address) -> Vec<u64> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::BuyerEscrowIndex(buyer))
-            .unwrap_or(Vec::new(&env))
+        if let Some(index) = env.storage().persistent().get(&DataKey::BuyerEscrowIndex(buyer.clone())) {
+            return index;
+        }
+
         let mut result = Vec::new(&env);
         let counter: u64 = env
             .storage()
