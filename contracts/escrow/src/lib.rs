@@ -4,6 +4,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, S
 pub mod errors;
 pub mod events;
 pub mod helpers;
+pub mod storage;
 pub mod types;
 pub use crate::errors::ContractError;
 pub use crate::events::{
@@ -520,6 +521,15 @@ impl Escrow {
         };
 
         save_escrow(&env, escrow_id, &escrow);
+
+        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
+        vendor_escrows.push_back(escrow_id);
+        storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
+
+        let ext = get_ttl_extension(&env);
+        let index_key = storage::StorageKey::VendorEscrowIndex(escrow.seller.clone());
+        env.storage().persistent().extend_ttl(&index_key, ext / 2, ext);
+
         increment_counter(&env, &DataKey::TotalCreated)?;
         emit_escrow_created(
             &env,
@@ -940,8 +950,8 @@ impl Escrow {
         Ok(())
     }
 
-    pub fn get_escrow(env: Env, escrow_id: u64) -> EscrowData {
-        load_escrow(&env, escrow_id).expect("escrow not found")
+    pub fn get_escrow(env: Env, escrow_id: u64) -> Result<EscrowData, ContractError> {
+        load_escrow(&env, escrow_id)
     }
 
     pub fn get_dispute(env: Env, escrow_id: u64) -> Option<DisputeData> {
@@ -949,10 +959,9 @@ impl Escrow {
     }
 
     pub fn get_escrows_by_buyer(env: Env, buyer: Address) -> Vec<u64> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::BuyerEscrowIndex(buyer))
-            .unwrap_or(Vec::new(&env))
+        if let Some(ids) = env.storage().persistent().get(&DataKey::BuyerEscrowIndex(buyer.clone())) {
+            return ids;
+        }
         let mut result = Vec::new(&env);
         let counter: u64 = env
             .storage()
@@ -967,6 +976,10 @@ impl Escrow {
             }
         }
         result
+    }
+
+    pub fn get_escrows_by_vendor(env: Env, vendor: Address) -> Vec<u64> {
+        storage::read_vendor_escrow_index(&env, &vendor)
     }
 
     /// Returns on-chain counters for escrow lifecycle events.
@@ -1069,3 +1082,5 @@ mod test_cancel_restrictions;
 mod test_dispute_window;
 mod test_unauthorized;
 mod test_concurrent_vendor_escrows;
+mod test_not_found;
+mod test_get_escrows_by_vendor;
