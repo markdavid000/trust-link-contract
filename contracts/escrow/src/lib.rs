@@ -840,56 +840,6 @@ impl Escrow {
         Ok(())
     }
 
-    pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
-        ensure_not_paused(&env)?;
-
-        let mut escrow = load_escrow(&env, escrow_id)?;
-
-        if escrow.state != EscrowState::Pending {
-            return Err(ContractError::InvalidState);
-        }
-
-        // If a buyer was pre-designated at creation enforce it; otherwise
-        // designate the funder as the buyer.
-        if escrow.buyer.is_none() {
-            escrow.buyer = Some(buyer.clone());
-        }
-
-        let escrow_buyer = escrow.buyer.as_ref().ok_or(ContractError::NotAuthorized)?;
-        escrow_buyer.require_auth();
-
-        if &buyer != escrow_buyer {
-            return Err(ContractError::NotAuthorized);
-        }
-
-        // Security: buyer must not overlap with seller or resolver.
-        if buyer == escrow.seller || buyer == escrow.resolver {
-            return Err(ContractError::ConflictingRoles);
-        }
-
-        escrow.state = EscrowState::Funded;
-        escrow.funded_at = env.ledger().timestamp();
-        escrow.dispute_deadline = escrow.funded_at + DISPUTE_WINDOW;
-
-        let token_client = token::Client::new(&env, &escrow.token);
-        token_client.transfer(escrow_buyer, env.current_contract_address(), &escrow.amount);
-
-        save_escrow(&env, escrow_id, &escrow);
-
-        let mut buyer_escrows: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
-            .unwrap_or(Vec::new(&env));
-        buyer_escrows.push_back(escrow_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::BuyerEscrowIndex(buyer.clone()), &buyer_escrows);
-
-        emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
-        Ok(())
-    }
-
     /// Seller marks an escrow as shipped. Transitions Funded → Shipped.
     pub fn mark_shipped(env: Env, caller: Address, escrow_id: u64, tracking_id: String) -> Result<(), ContractError> {
         // SECURITY:
