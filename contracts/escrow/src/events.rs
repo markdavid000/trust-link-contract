@@ -517,6 +517,43 @@ pub fn emit_milestone_released(
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowTrancheFunded {
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub tranche_amount: i128,
+    pub funded_amount: i128,
+    pub total_amount: i128,
+    pub timestamp: u64,
+}
+
+/// Topic: `("escrow_tranche_funded", escrow_id)`, data: `EscrowTrancheFunded`.
+///
+/// Emitted for a partial-funding call that does *not* yet complete funding.
+/// Once `funded_amount` reaches `total_amount`, `emit_escrow_funded` fires
+/// instead (on that same call) - exactly as for a single lump-sum payment.
+pub fn emit_escrow_tranche_funded(
+    env: &Env,
+    escrow_id: u64,
+    buyer: Address,
+    tranche_amount: i128,
+    funded_amount: i128,
+    total_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_tranche_funded"), escrow_id),
+        EscrowTrancheFunded {
+            escrow_id,
+            buyer,
+            tranche_amount,
+            funded_amount,
+            total_amount,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenAllowlistUpdated {
     pub token: Address,
     pub added: bool,

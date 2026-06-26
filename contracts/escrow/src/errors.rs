@@ -75,6 +75,9 @@ pub enum ContractError {
     /// Returned when a milestone-only operation (e.g. `release_milestone`)
     /// is called on an escrow that was not created with `create_milestone_escrow`.
     NotMilestoneEscrow = 29,
+    /// Returned when a `fund_escrow_tranche` payment would push the escrow's
+    /// funded total past its agreed `amount`.
+    TrancheExceedsRemaining = 30,
     /// Returned when a token is not in the allowlist.
     TokenNotAllowed = 25,
     /// Returned when attempting to finalize a dispute that is not in PendingFinalization state.

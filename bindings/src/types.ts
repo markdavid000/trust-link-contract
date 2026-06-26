@@ -66,6 +66,7 @@ export enum ContractError {
   MilestoneNotFound = 27,
   MilestoneAlreadyReleased = 28,
   NotMilestoneEscrow = 29,
+  TrancheExceedsRemaining = 30,
 }
 
 // ── Config / fee types ──────────────────────────────────────────────────────
@@ -122,6 +123,10 @@ export interface EscrowData {
   state: EscrowState;
   /** `null` unless this escrow was created via `create_milestone_escrow`. */
   milestones: Milestone[] | null;
+  /** Running total actually paid in via fund_escrow / fund_escrow_tranche.
+   * Equals `amount` once fully funded (state becomes Funded exactly then).
+   * Before that, this - not `amount` - is what a cancellation refunds. */
+  funded_amount: bigint;
 }
 
 export interface DisputeData {
@@ -278,4 +283,13 @@ export interface MilestoneReleased {
   amount: bigint;
   remaining_milestones: number;
   released_at: bigint;
+}
+
+export interface EscrowTrancheFunded {
+  escrow_id: bigint;
+  buyer: AddressLike;
+  tranche_amount: bigint;
+  funded_amount: bigint;
+  total_amount: bigint;
+  timestamp: bigint;
 }

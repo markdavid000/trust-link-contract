@@ -123,6 +123,22 @@ export class EscrowClient {
     return this.transport.invoke("fund_escrow", [escrowId, buyer]);
   }
 
+  /** Contributes a partial payment toward an escrow's agreed amount. May be
+   * called repeatedly by the same buyer until the sum of tranches reaches
+   * the escrow's amount, at which point it transitions Pending -> Funded
+   * exactly as fund_escrow would. */
+  fund_escrow_tranche(
+    escrowId: bigint,
+    buyer: AddressLike,
+    trancheAmount: bigint
+  ): void | Promise<void> {
+    return this.transport.invoke("fund_escrow_tranche", [
+      escrowId,
+      buyer,
+      trancheAmount,
+    ]);
+  }
+
   raise_dispute(
     caller: AddressLike,
     escrowId: bigint,

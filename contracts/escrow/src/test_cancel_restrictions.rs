@@ -1,6 +1,9 @@
 #![cfg(test)]
-//! `cancel_escrow` is only legal while the escrow is `Pending` (#21). From
-//! any other state it must reject with `InvalidState`.
+//! `cancel_escrow` restrictions. Originally (#21) this was Pending-only;
+//! #89 later added buyer-initiated cancellation-with-refund from the
+//! Funded state too (seller-initiated cancellation still never refunds).
+//! From any other state (Shipped, Completed, Disputed) it must still
+//! reject with `InvalidState` for either party.
 
 use crate::{ContractError, DataKey, Escrow, EscrowClient, EscrowData, EscrowState};
 use soroban_sdk::{
@@ -34,26 +37,9 @@ fn setup() -> Fx {
     let client = EscrowClient::new(&env, &contract_id);
     client.initialize(&admin, &fee_collector, &0_u32);
     let amount: i128 = 1_000;
-    let escrow_id = client.create_escrow(
-        &seller,
-        &None::<Address>,
-        &resolver,
-        &token_addr,
-        &amount,
-        &0_u32,
-        &0_u64,
-    );
+    let escrow_id = client.create_escrow(&seller, &None::<Address>, &resolver, &token_addr, &amount, &0_u32, &0_u64);
     token::StellarAssetClient::new(&env, &token_addr).mint(&buyer, &amount);
-    Fx {
-        env,
-        client,
-        contract_id,
-        escrow_id,
-        seller,
-        buyer,
-        resolver,
-        token_addr,
-    }
+    Fx { env, client, contract_id, escrow_id, seller, buyer, resolver, token_addr }
 }
 
 fn ship(fx: &Fx) {
@@ -69,23 +55,56 @@ fn cancel_succeeds_in_pending_state() {
     let data: EscrowData = fx
         .env
         .as_contract(&fx.contract_id, || {
-            fx.env
-                .storage()
-                .persistent()
-                .get(&DataKey::Escrow(fx.escrow_id))
+            fx.env.storage().persistent().get(&DataKey::Escrow(fx.escrow_id))
         })
         .expect("escrow exists");
     assert_eq!(data.state, EscrowState::Canceled);
 }
 
 #[test]
-fn cancel_fails_in_funded_state() {
+fn cancel_succeeds_with_refund_in_funded_state_for_buyer() {
+    // NOTE: this file's original #21 restriction ("cancel_escrow is only
+    // legal while Pending") was superseded by #89, which added buyer-
+    // initiated cancellation-with-refund from the Funded state (see
+    // test_cancel_escrow_by_buyer_refunds_full_amount in test.rs). This test
+    // used to assert the old #21-only behaviour and would fail against the
+    // current, intended implementation - updated to match #89.
     let fx = setup();
     fx.client.fund_escrow(&fx.escrow_id, &fx.buyer);
-    assert_eq!(
-        fx.client.try_cancel_escrow(&fx.seller, &fx.escrow_id),
-        Err(Ok(ContractError::InvalidState)),
-    );
+
+    let balance_before = token::Client::new(&fx.env, &fx.token_addr).balance(&fx.buyer);
+    fx.client.cancel_escrow(&fx.buyer, &fx.escrow_id);
+    let balance_after = token::Client::new(&fx.env, &fx.token_addr).balance(&fx.buyer);
+
+    assert_eq!(balance_after, balance_before + 1_000, "buyer must get a full refund");
+
+    let data: EscrowData = fx
+        .env
+        .as_contract(&fx.contract_id, || {
+            fx.env.storage().persistent().get(&DataKey::Escrow(fx.escrow_id))
+        })
+        .expect("escrow exists");
+    assert_eq!(data.state, EscrowState::Canceled); // fee_bps is 0 in setup()
+}
+
+#[test]
+fn cancel_by_seller_in_funded_state_does_not_refund() {
+    // Seller-initiated cancellation never refunds (#89) - only the buyer
+    // can trigger a refund via cancel_escrow. This intentionally leaves a
+    // funded buyer's deposit unreturned if the seller (not the buyer)
+    // cancels - see lib.rs's cancel_escrow for the full rationale.
+    let fx = setup();
+    fx.client.fund_escrow(&fx.escrow_id, &fx.buyer);
+
+    fx.client.cancel_escrow(&fx.seller, &fx.escrow_id);
+
+    let data: EscrowData = fx
+        .env
+        .as_contract(&fx.contract_id, || {
+            fx.env.storage().persistent().get(&DataKey::Escrow(fx.escrow_id))
+        })
+        .expect("escrow exists");
+    assert_eq!(data.state, EscrowState::Canceled);
 }
 
 #[test]
@@ -108,10 +127,7 @@ fn cancel_fails_in_completed_state() {
     let escrow: EscrowData = fx
         .env
         .as_contract(&fx.contract_id, || {
-            fx.env
-                .storage()
-                .persistent()
-                .get(&DataKey::Escrow(fx.escrow_id))
+            fx.env.storage().persistent().get(&DataKey::Escrow(fx.escrow_id))
         })
         .expect("escrow exists");
     fx.env.ledger().set_timestamp(escrow.dispute_deadline + 1);
@@ -132,8 +148,7 @@ fn cancel_fails_in_disputed_state() {
     let reason = Symbol::new(&fx.env, "non_delivery");
     let description = String::from_str(&fx.env, "missing");
     let evidence = BytesN::from_array(&fx.env, &[0xab; 32]);
-    fx.client
-        .raise_dispute(&fx.buyer, &fx.escrow_id, &reason, &description, &evidence);
+    fx.client.raise_dispute(&fx.buyer, &fx.escrow_id, &reason, &description, &evidence);
 
     assert_eq!(
         fx.client.try_cancel_escrow(&fx.seller, &fx.escrow_id),

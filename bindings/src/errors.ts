@@ -32,6 +32,7 @@ export const enum ErrorCode {
   MilestoneNotFound = 27,
   MilestoneAlreadyReleased = 28,
   NotMilestoneEscrow = 29,
+  TrancheExceedsRemaining = 30,
 }
 
 /** Human-readable message for every contract error code. */
@@ -82,6 +83,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
     "This milestone has already been released and cannot be released again.",
   [ErrorCode.NotMilestoneEscrow]:
     "This operation requires a milestone escrow, but the escrow has no milestones.",
+  [ErrorCode.TrancheExceedsRemaining]:
+    "This funding tranche would exceed the escrow's remaining unfunded balance.",
 };
 
 /**

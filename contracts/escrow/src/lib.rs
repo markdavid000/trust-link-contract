@@ -16,8 +16,9 @@ pub use crate::errors::ContractError;
 pub use crate::events::{
     AdminRotated, AutoReleased, ContractInitialized, ContractPausedEvent, ContractUnpausedEvent,
     DeliveryRecorded, DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted,
-    EscrowCreated, EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn, ArbitrationFeeUpdated,
-    ProtocolFeeUpdated, ResolverRotated,
+    EscrowCreated, EscrowFunded, EscrowShipped, EscrowTrancheFunded, FeeUpdated, FeesWithdrawn,
+    ArbitrationFeeUpdated, MilestoneEscrowCreated, MilestoneReleased, ProtocolFeeUpdated,
+    ResolverRotated,
     emit_admin_rotated, emit_auto_released, emit_contract_initialized, emit_contract_paused,
     emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
     emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
@@ -250,6 +251,13 @@ pub struct EscrowData {
     env.storage()
         .instance()
         .set(&DataKey::FeeConfig, fee_config);
+
+    /// Running total actually transferred in via `fund_escrow` /
+    /// `fund_escrow_tranche`. Equals `amount` once fully funded (state
+    /// transitions Pending -> Funded exactly when this happens). Before
+    /// that, this is the exact amount a cancellation should refund - not
+    /// `amount`, which is the agreed total, not what's actually been paid.
+    pub funded_amount: i128,
 }
 
 fn validate_escrow_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
@@ -407,6 +415,100 @@ fn load_dispute(env: &Env, id: u64) -> Result<DisputeData, ContractError> {
     let ext = get_ttl_extension(env);
     env.storage().persistent().extend_ttl(&key, ext / 2, ext);
     Ok(dispute)
+}
+
+/// Shared implementation behind `fund_escrow` and `fund_escrow_tranche`.
+///
+/// The buyer is locked in on the first successful funding call (whether
+/// that's a full `fund_escrow` payment or the first of several tranches);
+/// every subsequent call - including a pre-assigned buyer from
+/// `create_escrow`'s own `buyer` parameter - must come from that same
+/// address. The escrow transitions Pending -> Funded exactly when
+/// `funded_amount` reaches `amount`, regardless of how many calls it took
+/// to get there.
+fn fund_tranche(env: &Env, escrow_id: u64, buyer: Address, tranche_amount: i128) -> Result<(), ContractError> {
+    buyer.require_auth();
+    ensure_not_paused(env)?;
+
+    let mut escrow = load_escrow(env, escrow_id)?;
+
+    if escrow.state != EscrowState::Pending {
+        return Err(ContractError::InvalidState);
+    }
+
+    if tranche_amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    // A buyer who is also the seller or resolver could self-deal: fund their
+    // own escrow to fake a payment trail, or otherwise game dispute/fee
+    // mechanics. Same role-separation rule create_escrow already enforces
+    // for seller/resolver/buyer at creation time.
+    if buyer == escrow.seller || buyer == escrow.resolver {
+        return Err(ContractError::ConflictingRoles);
+    }
+
+    match &escrow.buyer {
+        None => escrow.buyer = Some(buyer.clone()),
+        Some(existing) => {
+            if existing != &buyer {
+                return Err(ContractError::NotAuthorized);
+            }
+        }
+    }
+
+    // "First funding call" means no money has moved yet for this escrow,
+    // not "buyer was unset" - create_escrow can pre-assign a buyer before
+    // any funds arrive, and the buyer index must still be updated once.
+    let is_first_funding_call = escrow.funded_amount == 0;
+
+    let new_funded_amount = escrow
+        .funded_amount
+        .checked_add(tranche_amount)
+        .ok_or(ContractError::ArithmeticError)?;
+    if new_funded_amount > escrow.amount {
+        return Err(ContractError::TrancheExceedsRemaining);
+    }
+    escrow.funded_amount = new_funded_amount;
+
+    let token_client = token::Client::new(env, &escrow.token);
+    let contract_address = env.current_contract_address();
+    token_client.transfer(&buyer, &contract_address, &tranche_amount);
+
+    let fully_funded = escrow.funded_amount == escrow.amount;
+    if fully_funded {
+        escrow.state = EscrowState::Funded;
+        escrow.funded_at = env.ledger().timestamp();
+        escrow.dispute_deadline = escrow.funded_at + DISPUTE_WINDOW;
+    }
+
+    save_escrow(env, escrow_id, &escrow);
+
+    if is_first_funding_call {
+        let mut buyer_escrows: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
+            .unwrap_or(Vec::new(env));
+        buyer_escrows.push_back(escrow_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BuyerEscrowIndex(buyer.clone()), &buyer_escrows);
+    }
+
+    if fully_funded {
+        emit_escrow_funded(env, escrow_id, buyer, escrow.amount);
+    } else {
+        emit_escrow_tranche_funded(
+            env,
+            escrow_id,
+            buyer,
+            tranche_amount,
+            escrow.funded_amount,
+            escrow.amount,
+        );
+    }
+    Ok(())
 }
 
 /// Deducts the protocol fee from `amount` and transfers the net to `recipient`,
@@ -913,6 +1015,7 @@ impl Escrow {
             tracking_id: None,
             milestones: None,
             None,
+            funded_amount: 0,
         };
 
         save_escrow(&env, escrow_id, &escrow);
@@ -1035,6 +1138,7 @@ impl Escrow {
             delivered_at: None,
             tracking_id: None,
             milestones: Some(milestones),
+            funded_amount: 0,
         };
 
         save_escrow(&env, escrow_id, &escrow);
@@ -1182,56 +1286,38 @@ impl Escrow {
     ///
     /// Transfers `escrow.amount` tokens from the buyer to the contract vault,
     /// records the buyer address, and starts the dispute-deadline clock.
-    pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
-        buyer.require_auth();
+    /// Funds the escrow's entire remaining (unfunded) balance in one call -
+    /// unchanged behaviour for any caller that has never used
+    /// `fund_escrow_tranche`, since for a fresh escrow the "remaining"
+    /// balance is the whole `amount`.
+    pub fn fund_escrow(
+        env: Env,
+        escrow_id: u64,
+        buyer: Address,
+    ) -> Result<(), ContractError> {
+        let escrow = load_escrow(&env, escrow_id)?;
+        let remaining = escrow
+            .amount
+            .checked_sub(escrow.funded_amount)
+            .ok_or(ContractError::ArithmeticError)?;
+        fund_tranche(&env, escrow_id, buyer, remaining)
+    }
 
-        ensure_not_paused(&env)?;
-        let mut escrow = load_escrow(&env, escrow_id)?;
-
-        if escrow.state != EscrowState::Pending {
-            return Err(ContractError::InvalidState);
-        }
-
-        // Security: buyer must differ from seller and resolver.
-        if buyer == escrow.seller {
-            return Err(ContractError::ConflictingRoles);
-        }
-        if buyer == escrow.resolver {
-            return Err(ContractError::ConflictingRoles);
-        }
-        // If an intended buyer was specified at creation, only that address may fund.
-        if let Some(ref expected_buyer) = escrow.buyer {
-            if &buyer != expected_buyer {
-                return Err(ContractError::NotAuthorized);
-            }
-        }
-
-        let token_client = token::Client::new(&env, &escrow.token);
-        token_client.transfer(&buyer, &env.current_contract_address(), &escrow.amount);
-
-        let now = env.ledger().timestamp();
-        escrow.buyer = Some(buyer.clone());
-        escrow.state = EscrowState::Funded;
-        escrow.funded_at = now;
-        escrow.dispute_deadline = now
-            .checked_add(DISPUTE_WINDOW)
-            .ok_or(ContractError::ArithmeticOverflow)?;
-
-        // Index the buyer for lookup.
-        let mut buyer_escrows: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::BuyerEscrowIndex(buyer.clone()))
-            .unwrap_or(Vec::new(&env));
-        buyer_escrows.push_back(escrow_id);
-        let buyer_key = DataKey::BuyerEscrowIndex(buyer.clone());
-        let ext = get_ttl_extension(&env);
-        env.storage().persistent().set(&buyer_key, &buyer_escrows);
-        env.storage().persistent().extend_ttl(&buyer_key, ext / 2, ext);
-
-        save_escrow(&env, escrow_id, &escrow);
-        emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
-        Ok(())
+    /// Contributes a partial payment ("tranche") toward an escrow's agreed
+    /// amount. May be called repeatedly by the same buyer until the sum of
+    /// all tranches reaches `amount`, at which point the escrow transitions
+    /// Pending -> Funded exactly as a single lump-sum `fund_escrow` call
+    /// would. `mark_shipped` requires `state == Funded`, so a partially
+    /// funded escrow cannot be marked shipped no matter how close to fully
+    /// funded it is - there's no separate "fully funded" check needed
+    /// because the state machine already enforces it.
+    pub fn fund_escrow_tranche(
+        env: Env,
+        escrow_id: u64,
+        buyer: Address,
+        tranche_amount: i128,
+    ) -> Result<(), ContractError> {
+        fund_tranche(&env, escrow_id, buyer, tranche_amount)
     }
 
     /// Buyer raises a dispute on a funded or shipped escrow.
@@ -1361,12 +1447,61 @@ impl Escrow {
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
 
-        let buyer = escrow.buyer.clone();
-        if escrow.seller != caller && buyer.as_ref() != Some(&caller) {
+        let is_seller = caller == escrow.seller;
+        let is_buyer = Some(&caller) == escrow.buyer.as_ref();
+
+        if !is_seller && !is_buyer {
             return Err(ContractError::NotAuthorized);
         }
 
+        // Buyer may cancel a fully-funded escrow (full refund, existing
+        // behaviour) or one they're partway through tranche-funding
+        // (partial refund) - is_buyer can only be true once at least one
+        // tranche has landed, since buyer is unset until the first funding
+        // call, so Pending here specifically means "partially funded".
+        if is_buyer && escrow.state != EscrowState::Funded && escrow.state != EscrowState::Pending {
+            return Err(ContractError::InvalidState);
+        }
+
+        if is_seller && !is_buyer && escrow.state != EscrowState::Pending && escrow.state != EscrowState::Funded {
+            return Err(ContractError::InvalidState);
+        }
+
+        if is_buyer {
+            // What's actually held for this escrow right now:
+            // - Pending (partial tranches): funded_amount - `amount` is the
+            //   agreed total, not what's arrived yet.
+            // - Funded: `amount` - for a plain escrow this still equals
+            //   funded_amount, but for a milestone escrow with releases
+            //   already in progress, `amount` has been correctly decremented
+            //   by each release while funded_amount has not, so using
+            //   funded_amount here would refund money already paid to the
+            //   seller via release_milestone.
+            let refund_amount = if escrow.state == EscrowState::Funded {
+                escrow.amount
+            } else {
+                escrow.funded_amount
+            };
+
+            if refund_amount > 0 {
+                if let Some(buyer) = &escrow.buyer {
+                    token::Client::new(&env, &escrow.token)
+                        .transfer(&env.current_contract_address(), buyer, &refund_amount);
+                }
+                escrow.funded_amount = 0;
+            }
+
+            if refund_amount > 0 && escrow.fee_bps > 0 {
+                escrow.state = EscrowState::Refunded;
+            } else {
+                escrow.state = EscrowState::Canceled;
+            }
+        } else {
+            escrow.state = EscrowState::Canceled;
+        }
+
         save_escrow(&env, escrow_id, &escrow);
+
         emit_escrow_cancelled(&env, escrow_id, caller);
         Ok(())
     }
@@ -2571,6 +2706,7 @@ impl Escrow {
 
 mod test;
 mod test_milestone_escrow;
+mod test_tranche_funding;
 mod test_edge_cases;
 mod test_withdraw_fees;
 mod test_dispute;
