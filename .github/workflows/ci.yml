@@ -54,6 +54,39 @@ jobs:
       - run: cargo build --workspace --release
       - run: cargo build --workspace --release --target wasm32v1-none
 
+  bindings:
+    name: TypeScript bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - uses: Swatinem/rust-cache@v2
+      - name: Build contract WASM
+        run: cargo build --workspace --release --target wasm32v1-none
+      - name: Install Stellar CLI
+        uses: stellar/stellar-cli@v23.0.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install bindings devDependencies
+        working-directory: bindings
+        run: npm ci
+      - name: Regenerate TypeScript bindings from the built contract
+        working-directory: bindings
+        run: npm run generate
+      - name: Fail if the regenerated bindings differ from what's committed
+        run: |
+          if ! git diff --exit-code -- bindings/src; then
+            echo "::error::bindings/src is out of sync with the contract." \
+              "Run 'npm run generate' inside bindings/ and commit the result."
+            exit 1
+          fi
+      - name: Typecheck the (possibly CLI-regenerated) bindings
+        working-directory: bindings
+        run: npm run typecheck
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

@@ -37,7 +37,10 @@ export interface SorobanContextLike {
    * `@soroban-react/core` exposes this as `server.sendTransaction` after
    * signing with the active connector.
    */
-  signTransaction?: (xdr: string, opts?: Record<string, unknown>) => Promise<string>;
+  signTransaction?: (
+    xdr: string,
+    opts?: Record<string, unknown>
+  ) => Promise<string>;
 }
 
 /**
@@ -85,11 +88,16 @@ export interface SorobanTransportOptions {
  * }
  * ```
  */
-export function createSorobanTransport(options: SorobanTransportOptions): ContractTransport {
+export function createSorobanTransport(
+  options: SorobanTransportOptions
+): ContractTransport {
   const { contractId, context, rpcUrl, networkPassphrase } = options;
 
   return {
-    invoke<TReturn>(method: string, args: readonly unknown[]): Promise<TReturn> {
+    invoke<TReturn>(
+      method: string,
+      args: readonly unknown[]
+    ): Promise<TReturn> {
       return invokeSoroban<TReturn>({
         contractId,
         method,
@@ -114,7 +122,10 @@ interface InvokeParams {
   rpcUrl: string;
   networkPassphrase: string;
   callerAddress?: string;
-  signTransaction?: (xdr: string, opts?: Record<string, unknown>) => Promise<string>;
+  signTransaction?: (
+    xdr: string,
+    opts?: Record<string, unknown>
+  ) => Promise<string>;
 }
 
 /**
@@ -192,7 +203,9 @@ async function invokeSoroban<TReturn>({
   const sendResult = await server.sendTransaction(signedTx);
 
   if (sendResult.status === "ERROR") {
-    throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
+    throw new Error(
+      `Transaction failed: ${JSON.stringify(sendResult.errorResult)}`
+    );
   }
 
   // Poll until finality
@@ -206,10 +219,12 @@ async function invokeSoroban<TReturn>({
     throw new Error(`Transaction failed on-chain: ${sendResult.hash}`);
   }
 
-  // Decode return value when present
-  const returnVal = (getResult as Record<string, unknown>)["returnValue"];
+  // Decode return value when present. `returnValue` is a real, optional
+  // field on GetSuccessfulTransactionResponse - no unsafe cast needed once
+  // TypeScript has narrowed getResult past the FAILED/NOT_FOUND cases above.
+  const returnVal = getResult.returnValue;
   if (returnVal) {
-    return scValToNative(returnVal as Parameters<typeof scValToNative>[0]) as TReturn;
+    return scValToNative(returnVal) as TReturn;
   }
 
   return undefined as unknown as TReturn;
@@ -245,17 +260,23 @@ export async function createFreighterTransport(opts: {
 }): Promise<ContractTransport> {
   const freighter = await import("@stellar/freighter-api");
   const isConnected = await freighter.isConnected();
-  if (!isConnected) throw new Error("Freighter wallet is not installed or not accessible.");
+  if (!isConnected)
+    throw new Error("Freighter wallet is not installed or not accessible.");
 
-  const { address } = await freighter.getAddress();
+  const address = await freighter.getPublicKey();
 
-  const signTransaction: SorobanContextLike["signTransaction"] = async (xdr) => {
+  const signTransaction: SorobanContextLike["signTransaction"] = async (
+    xdr
+  ) => {
     const result = await freighter.signTransaction(xdr, {
       networkPassphrase: opts.networkPassphrase,
     });
     // Freighter ≥ 2.x returns { signedTxXdr, signerAddress }
     if (typeof result === "string") return result;
-    if (result && typeof (result as Record<string, unknown>)["signedTxXdr"] === "string") {
+    if (
+      result &&
+      typeof (result as Record<string, unknown>)["signedTxXdr"] === "string"
+    ) {
       return (result as Record<string, unknown>)["signedTxXdr"] as string;
     }
     throw new Error("Unexpected Freighter signTransaction response shape.");
