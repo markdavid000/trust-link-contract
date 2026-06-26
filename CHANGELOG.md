@@ -12,6 +12,9 @@ non-user-facing repository maintenance.
 
 ### Added
 
+- Added a complete storage layout reference in `docs/storage.md` documenting
+  every `DataKey`/`StorageKey` entry with its type, storage tier, and TTL
+  strategy.
 - Added README status badges for CI, test count, code coverage, and crate
   version.
 - Added a `coverage` job to the CI workflow that uploads `cargo-llvm-cov`
