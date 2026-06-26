@@ -58,7 +58,7 @@ pub enum ContractError {
     /// Returned when two roles that must be distinct are assigned the same address
     /// (e.g. resolver == seller, buyer == seller, or buyer == resolver).
     ConflictingRoles = 23,
-    /// Returned when raising a dispute after the dispute window has closed.
+    /// Returned when a buyer attempts to raise a dispute after the dispute window has closed.
     DisputeWindowClosed = 24,
     /// Returned when `create_milestone_escrow` is called with an empty
     /// milestone list - there is nothing to stage a release against.
@@ -75,4 +75,14 @@ pub enum ContractError {
     /// Returned when a milestone-only operation (e.g. `release_milestone`)
     /// is called on an escrow that was not created with `create_milestone_escrow`.
     NotMilestoneEscrow = 29,
+    /// Returned when a token is not in the allowlist.
+    TokenNotAllowed = 25,
+    /// Returned when attempting to finalize a dispute that is not in PendingFinalization state.
+    NotPendingFinalization = 26,
+    /// Returned when the appeal window is still active.
+    AppealWindowActive = 27,
+    /// Returned when the platform fee exceeds the maximum allowed.
+    PlatformFeeExceedsMax = 28,
+    /// Returned when an escrow amount is below the minimum allowed limit.
+    AmountBelowMinimum = 29,
 }
