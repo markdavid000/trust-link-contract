@@ -97,3 +97,15 @@ pub enum EscrowState {
     Refunded,
     Canceled,
 }
+
+/// A single stage of a milestone-based escrow.
+///
+/// `amount` is the stroop amount allocated to this stage; `released` tracks
+/// whether it has already been paid out, so a given milestone can only ever
+/// be released once (see `release_milestone` in lib.rs).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Milestone {
+    pub amount: i128,
+    pub released: bool,
+}

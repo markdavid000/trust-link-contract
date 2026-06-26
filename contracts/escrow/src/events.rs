@@ -447,3 +447,67 @@ pub fn emit_resolver_rotated(
         },
     );
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneEscrowCreated {
+    pub escrow_id: u64,
+    pub milestone_count: u32,
+    pub total_amount: i128,
+    pub timestamp: u64,
+}
+
+/// Topic: `("milestone_escrow_created",)`, data: `MilestoneEscrowCreated`.
+pub fn emit_milestone_escrow_created(
+    env: &Env,
+    escrow_id: u64,
+    milestone_count: u32,
+    total_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_escrow_created"),),
+        MilestoneEscrowCreated {
+            escrow_id,
+            milestone_count,
+            total_amount,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneReleased {
+    pub escrow_id: u64,
+    pub milestone_index: u32,
+    pub seller: Address,
+    pub amount: i128,
+    pub remaining_milestones: u32,
+    pub released_at: u64,
+}
+
+/// Topic: `("milestone_released", escrow_id)`, data: `MilestoneReleased`.
+///
+/// `escrow_id` is kept in the topic (unlike most single-topic events here) so
+/// off-chain indexers can filter the release history of one specific escrow
+/// without scanning every milestone release on the contract.
+pub fn emit_milestone_released(
+    env: &Env,
+    escrow_id: u64,
+    milestone_index: u32,
+    seller: Address,
+    amount: i128,
+    remaining_milestones: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_released"), escrow_id),
+        MilestoneReleased {
+            escrow_id,
+            milestone_index,
+            seller,
+            amount,
+            remaining_milestones,
+            released_at: env.ledger().timestamp(),
+        },
+    );
+}

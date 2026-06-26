@@ -40,3 +40,29 @@ pub fn create_funded_escrow(
     client.fund_escrow(&id, buyer);
     id
 }
+
+pub fn create_funded_milestone_escrow(
+    env: &Env,
+    client: &EscrowClient,
+    seller: &Address,
+    buyer: &Address,
+    resolver: &Address,
+    token: &Address,
+    milestone_amounts: &soroban_sdk::Vec<i128>,
+    fee_bps: u32,
+    shipping_window: u64,
+) -> u64 {
+    let total: i128 = milestone_amounts.iter().sum();
+    mint_token(env, token, buyer, total);
+    let id = client.create_milestone_escrow(
+        seller,
+        &None::<Address>,
+        resolver,
+        token,
+        milestone_amounts,
+        &fee_bps,
+        &shipping_window,
+    );
+    client.fund_escrow(&id, buyer);
+    id
+}

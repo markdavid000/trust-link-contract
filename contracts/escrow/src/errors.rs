@@ -60,4 +60,19 @@ pub enum ContractError {
     ConflictingRoles = 23,
     /// Returned when raising a dispute after the dispute window has closed.
     DisputeWindowClosed = 24,
+    /// Returned when `create_milestone_escrow` is called with an empty
+    /// milestone list - there is nothing to stage a release against.
+    EmptyMilestones = 25,
+    /// Returned when `create_milestone_escrow` is called with more stages
+    /// than `MAX_MILESTONES`, bounding storage/gas cost per escrow.
+    TooManyMilestones = 26,
+    /// Returned when `release_milestone` is given an index that does not
+    /// correspond to any stage on the escrow.
+    MilestoneNotFound = 27,
+    /// Returned when `release_milestone` targets a stage that has already
+    /// been paid out - milestone releases are not replayable.
+    MilestoneAlreadyReleased = 28,
+    /// Returned when a milestone-only operation (e.g. `release_milestone`)
+    /// is called on an escrow that was not created with `create_milestone_escrow`.
+    NotMilestoneEscrow = 29,
 }

@@ -12,16 +12,17 @@ pub use crate::events::{
     AdminRotated, AutoReleased, ContractInitialized, ContractPausedEvent, ContractUnpausedEvent,
     DeliveryRecorded, DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted,
     EscrowCreated, EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn, ArbitrationFeeUpdated,
-    ProtocolFeeUpdated, ResolverRotated,
+    MilestoneEscrowCreated, MilestoneReleased, ProtocolFeeUpdated, ResolverRotated,
     emit_admin_rotated, emit_auto_released, emit_contract_initialized, emit_contract_paused,
     emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
     emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
     emit_escrow_shipped, emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
-    emit_protocol_fee_updated, emit_resolver_rotated,
+    emit_milestone_escrow_created, emit_milestone_released, emit_protocol_fee_updated,
+    emit_resolver_rotated,
 };
 pub use crate::types::{
     ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowState,
-    FeeConfig, PublicContractConfig, ResolutionType,
+    FeeConfig, Milestone, PublicContractConfig, ResolutionType,
 };
 
 /// Maximum escrow fee in basis points (300 = 3%).
@@ -66,6 +67,10 @@ pub const MAX_DESCRIPTION_LEN: u32 = 256;
 /// preserve arithmetic safety for fee calculations
 /// and aggregate accounting operations.
 pub const MAX_ESCROW_AMOUNT: i128 = i128::MAX / 10_000;
+
+/// Maximum number of stages a milestone escrow can have. Bounds the storage
+/// and gas cost of `create_milestone_escrow` / `release_milestone` per escrow.
+pub const MAX_MILESTONES: u32 = 20;
 
 /// Validity matrix for escrow state transitions (#9).
 ///
@@ -151,6 +156,13 @@ pub struct EscrowData {
     pub delivered_at: Option<u64>,
     pub tracking_id: Option<String>,
     pub state: EscrowState,
+    /// `Some` only for escrows created via `create_milestone_escrow`. `amount`
+    /// always tracks the *remaining* unreleased balance: each successful
+    /// `release_milestone` call deducts that stage's amount from `amount`, so
+    /// every other payout path (`confirm_delivery`, `resolve_dispute`,
+    /// `auto_release`) keeps working unmodified against whatever balance is
+    /// actually still held for this escrow.
+    pub milestones: Option<Vec<Milestone>>,
 }
 
 fn validate_escrow_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
@@ -608,6 +620,7 @@ impl Escrow {
             shipped_at: 0,
             delivered_at: None,
             tracking_id: None,
+            milestones: None,
         };
 
         save_escrow(&env, escrow_id, &escrow);
@@ -628,6 +641,126 @@ impl Escrow {
             escrow.fee_bps,
             escrow.shipping_window,
         );
+        Ok(escrow_id)
+    }
+
+    /// Creates a milestone-based escrow: the total amount is staged across
+    /// multiple sequential payouts instead of one lump sum.
+    ///
+    /// `milestone_amounts` must be non-empty, capped at `MAX_MILESTONES`
+    /// entries, and every entry must be a positive stroop amount. The
+    /// escrow's `amount` (and therefore the balance `fund_escrow` transfers
+    /// in) is the sum of `milestone_amounts` - there is no separate "total"
+    /// parameter to keep in sync, so the sum-matches-balance invariant holds
+    /// by construction rather than by a runtime check that could drift.
+    ///
+    /// Funding, shipping, delivery, and dispute flows are unchanged: this
+    /// only adds `release_milestone` as a new way to pay the seller out of
+    /// an already-funded escrow, one stage at a time.
+    pub fn create_milestone_escrow(
+        env: Env,
+        seller: Address,
+        buyer: Option<Address>,
+        resolver: Address,
+        token: Address,
+        milestone_amounts: Vec<i128>,
+        fee_bps: u32,
+        shipping_window: u64,
+    ) -> Result<u64, ContractError> {
+        // SECURITY:
+        // Authenticate before any state reads.
+        seller.require_auth();
+
+        ensure_not_paused(&env)?;
+
+        if milestone_amounts.is_empty() {
+            return Err(ContractError::EmptyMilestones);
+        }
+        if milestone_amounts.len() > MAX_MILESTONES {
+            return Err(ContractError::TooManyMilestones);
+        }
+
+        let mut milestones = Vec::new(&env);
+        let mut total: i128 = 0;
+        for stage_amount in milestone_amounts.iter() {
+            if stage_amount <= 0 {
+                return Err(ContractError::InvalidAmount);
+            }
+            total = total.checked_add(stage_amount).ok_or(ContractError::ArithmeticError)?;
+            milestones.push_back(Milestone {
+                amount: stage_amount,
+                released: false,
+            });
+        }
+
+        if total > MAX_ESCROW_AMOUNT {
+            return Err(ContractError::AmountExceedsMaximum);
+        }
+        if total < MIN_ESCROW_AMOUNT {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        validate_escrow_fee_bps(fee_bps)?;
+
+        // Same three-party separation rules as create_escrow (#9 above).
+        if resolver == seller {
+            return Err(ContractError::ConflictingRoles);
+        }
+        if let Some(ref b) = buyer {
+            if b == &seller || b == &resolver {
+                return Err(ContractError::ConflictingRoles);
+            }
+        }
+
+        let escrow_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowCounter)
+            .expect("counter initialized");
+        let next_id = escrow_id.checked_add(1).ok_or(ContractError::ArithmeticError)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::EscrowCounter, &next_id);
+        let ext = get_ttl_extension(&env);
+        env.storage().instance().extend_ttl(ext / 2, ext);
+
+        let milestone_count = milestones.len();
+
+        let escrow = EscrowData {
+            seller,
+            buyer,
+            resolver,
+            token,
+            amount: total,
+            fee_bps,
+            shipping_window,
+            funded_at: 0,
+            dispute_deadline: 0,
+            state: EscrowState::Pending,
+            shipped_at: 0,
+            delivered_at: None,
+            tracking_id: None,
+            milestones: Some(milestones),
+        };
+
+        save_escrow(&env, escrow_id, &escrow);
+
+        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
+        vendor_escrows.push_back(escrow_id);
+        storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
+
+        increment_counter(&env, &DataKey::TotalCreated)?;
+        emit_escrow_created(
+            &env,
+            escrow_id,
+            escrow.seller.clone(),
+            escrow.resolver.clone(),
+            escrow.token.clone(),
+            escrow.amount,
+            escrow.fee_bps,
+            escrow.shipping_window,
+        );
+        emit_milestone_escrow_created(&env, escrow_id, milestone_count, total);
         Ok(escrow_id)
     }
 
@@ -877,7 +1010,120 @@ impl Escrow {
         Ok(())
     }
 
+    /// Releases one stage of a milestone escrow to the seller.
+    ///
+    /// Shares the buyer-authorization, state, and dispute-window guards with
+    /// `confirm_delivery` - a milestone escrow's first release is gated by
+    /// the same `dispute_deadline` as a lump-sum escrow's payout. Each call
+    /// deducts the released stage's amount from `escrow.amount`, so
+    /// `escrow.amount` always equals the sum of *unreleased* milestones; this
+    /// keeps `confirm_delivery` / `resolve_dispute` / `auto_release` correct
+    /// without any changes if one of those is ever used to settle the
+    /// remainder of a partially-released milestone escrow.
+    ///
+    /// Returns `Err(MilestoneAlreadyReleased)` if `milestone_index` has
+    /// already been paid out - releases are not replayable.
+    pub fn release_milestone(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        milestone_index: u32,
+    ) -> Result<(), ContractError> {
+        // Authenticate before reading escrow state or performing any transfers.
+        caller.require_auth();
 
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+        if caller != buyer {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state != EscrowState::Funded && escrow.state != EscrowState::Shipped {
+            return Err(ContractError::InvalidState);
+        }
+
+        if env.ledger().timestamp() < escrow.dispute_deadline {
+            return Err(ContractError::DeliveryBeforeDisputeWindow);
+        }
+
+        let mut milestones = escrow
+            .milestones
+            .clone()
+            .ok_or(ContractError::NotMilestoneEscrow)?;
+
+        if milestone_index >= milestones.len() {
+            return Err(ContractError::MilestoneNotFound);
+        }
+
+        let mut milestone = milestones
+            .get(milestone_index)
+            .ok_or(ContractError::MilestoneNotFound)?;
+        if milestone.released {
+            return Err(ContractError::MilestoneAlreadyReleased);
+        }
+        let release_amount = milestone.amount;
+
+        let fee_config = read_fee_config(&env);
+        let fee_collector: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeCollector)
+            .ok_or(ContractError::NotAuthorized)?;
+
+        transfer_with_protocol_fee(
+            &env,
+            &escrow.token,
+            &escrow.seller,
+            &fee_collector,
+            release_amount,
+            fee_config.protocol_fee_bps,
+        )?;
+
+        milestone.released = true;
+        milestones.set(milestone_index, milestone);
+
+        escrow.amount = escrow
+            .amount
+            .checked_sub(release_amount)
+            .ok_or(ContractError::ArithmeticError)?;
+
+        let remaining = milestones.iter().filter(|m| !m.released).count() as u32;
+        escrow.milestones = Some(milestones);
+
+        if remaining == 0 {
+            escrow.state = EscrowState::Completed;
+        }
+
+        save_escrow(&env, escrow_id, &escrow);
+
+        if remaining == 0 {
+            increment_counter(&env, &DataKey::TotalCompleted)?;
+            // Report the final stage's amount, not escrow.amount - by this
+            // point escrow.amount has already been decremented to whatever
+            // remains (0, since this was the last stage), so it would
+            // misleadingly report a 0-amount completion otherwise.
+            emit_escrow_completed(
+                &env,
+                escrow_id,
+                escrow.seller.clone(),
+                release_amount,
+                fee_config.protocol_fee_bps,
+            );
+        }
+
+        emit_milestone_released(
+            &env,
+            escrow_id,
+            milestone_index,
+            escrow.seller.clone(),
+            release_amount,
+            remaining,
+        );
+
+        Ok(())
+    }
 
     pub fn resolve_dispute(env: Env, caller: Address, escrow_id: u64, resolution: ResolutionType) -> Result<(), ContractError> {
         // SECURITY:
@@ -1178,6 +1424,7 @@ impl Escrow {
 }
 
 mod test;
+mod test_milestone_escrow;
 mod test_edge_cases;
 mod test_withdraw_fees;
 mod test_dispute;
