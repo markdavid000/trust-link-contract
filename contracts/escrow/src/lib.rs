@@ -1,6 +1,8 @@
+#![no_std]
 #![allow(deprecated, unused_imports)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, Val, Vec,
+    IntoVal, TryIntoVal,
 };
 
 // Added import for Message
@@ -32,8 +34,18 @@ pub use crate::events::{
 };
 pub use crate::types::{
     ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowData, EscrowState,
-    FeeConfig, PublicContractConfig, ResolutionType, EscrowInput,
+    FeeConfig, PublicContractConfig, ResolutionType, EscrowInput, Payee,
 };
+
+/// A single call descriptor used by the `multicall` batching function.
+/// `function` is the name of the contract method to invoke; `args` are its
+/// Soroban-serialised arguments.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractCall {
+    pub function: Symbol,
+    pub args: Vec<Val>,
+}
 
 /// Maximum escrow fee in basis points (300 = 3%).
 ///
@@ -532,16 +544,21 @@ fn increment_counter(env: &Env, key: &DataKey) -> Result<(), ContractError> {
 
 fn create_escrow_internal(
     env: &Env,
-    seller: Address,
+    payees: Vec<Payee>,
     buyer: Option<Address>,
     resolver: Address,
     token: Address,
     amount: i128,
     fee_bps: u32,
+    resolver_fee_bps: u32,
     shipping_window: u64,
     notes: Option<String>,
 ) -> Result<u64, ContractError> {
-    seller.require_auth();
+    if payees.is_empty() {
+        return Err(ContractError::InvalidAddress);
+    }
+    let first_payee = payees.get(0).unwrap();
+    first_payee.address.require_auth();
 
     ensure_action_not_paused(env, Symbol::new(env, "CREATE"))?;
 
@@ -560,6 +577,8 @@ fn create_escrow_internal(
     }
 
     validate_escrow_fee_bps(fee_bps)?;
+    validate_resolver_fee_bps(resolver_fee_bps)?;
+    validate_payees(env, &payees)?;
 
     // Validate notes length if present
     if let Some(ref n) = notes {
@@ -568,16 +587,26 @@ fn create_escrow_internal(
         }
     }
 
-    // Security: all three roles must be distinct to preserve the trustless
-    // three-party separation.
-    if resolver == seller {
-        return Err(ContractError::ConflictingRoles);
+    // Security: resolver must be distinct from all payees and buyer
+    for i in 0..payees.len() {
+        let payee = payees.get(i).unwrap();
+        if resolver == payee.address {
+            return Err(ContractError::ConflictingRoles);
+        }
+        if let Some(ref b) = buyer {
+            if b == &payee.address {
+                return Err(ContractError::ConflictingRoles);
+            }
+        }
     }
     if let Some(ref b) = buyer {
-        if b == &seller || b == &resolver {
+        if resolver == *b {
             return Err(ContractError::ConflictingRoles);
         }
     }
+
+    // Token allowlist check
+    is_token_allowed(env, &token)?;
 
     let escrow_id: u64 = env
         .storage()
@@ -594,12 +623,13 @@ fn create_escrow_internal(
     env.storage().instance().extend_ttl(ext / 2, ext);
 
     let escrow = EscrowData {
-        seller,
+        payees: payees.clone(),
         buyer,
-        resolver,
-        token,
+        resolver: resolver.clone(),
+        token: token.clone(),
         amount,
         fee_bps,
+        resolver_fee_bps,
         shipping_window,
         funded_at: 0,
         dispute_deadline: 0,
@@ -607,25 +637,27 @@ fn create_escrow_internal(
         shipped_at: 0,
         delivered_at: None,
         tracking_id: None,
-
+        notes,
     };
 
     save_escrow(env, escrow_id, &escrow);
 
-    let mut vendor_escrows = storage::read_vendor_escrow_index(env, &escrow.seller);
+    let first_payee_addr = payees.get(0).unwrap().address.clone();
+    let mut vendor_escrows = storage::read_vendor_escrow_index(env, &first_payee_addr);
     vendor_escrows.push_back(escrow_id);
     // write_vendor_escrow_index now handles TTL extension automatically
-    storage::write_vendor_escrow_index(env, &escrow.seller, &vendor_escrows);
+    storage::write_vendor_escrow_index(env, &first_payee_addr, &vendor_escrows);
 
     increment_counter(env, &DataKey::TotalCreated)?;
     emit_escrow_created(
         env,
         escrow_id,
-        escrow.seller.clone(),
+        first_payee_addr,
         escrow.resolver.clone(),
         escrow.token.clone(),
         escrow.amount,
         escrow.fee_bps,
+        escrow.resolver_fee_bps,
         0,
         escrow.shipping_window,
         crate::EscrowState::Pending,
@@ -962,7 +994,7 @@ impl Escrow {
 
         create_escrow_internal(
             &env,
-            seller,
+            payees,
             buyer,
             resolver,
             token,
@@ -987,12 +1019,13 @@ impl Escrow {
         increment_counter(&env, &DataKey::TotalCreated)?;
         emit_escrow_created(
             &env,
-            seller,
+            payees,
             buyer,
             resolver,
             token,
             amount,
             fee_bps,
+            0,
             shipping_window,
             notes,
         )
@@ -1019,8 +1052,11 @@ impl Escrow {
         }
 
         // Security: buyer must differ from seller and resolver.
-        if buyer == escrow.seller {
-            return Err(ContractError::ConflictingRoles);
+        for i in 0..escrow.payees.len() {
+            let payee = escrow.payees.get(i).unwrap();
+            if buyer == payee.address {
+                return Err(ContractError::ConflictingRoles);
+            }
         }
         if buyer == escrow.resolver {
             return Err(ContractError::ConflictingRoles);
@@ -1192,8 +1228,30 @@ impl Escrow {
         let mut escrow = load_escrow(&env, escrow_id)?;
 
         let buyer = escrow.buyer.clone();
-        if escrow.seller != caller && buyer.as_ref() != Some(&caller) {
+        let is_payee = {
+            let mut found = false;
+            for i in 0..escrow.payees.len() {
+                if caller == escrow.payees.get(i).unwrap().address {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if !is_payee && buyer.as_ref() != Some(&caller) {
             return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state == EscrowState::Pending {
+            escrow.state = EscrowState::Canceled;
+        } else if escrow.state == EscrowState::Funded && buyer.as_ref() == Some(&caller) {
+            let token_client = token::Client::new(&env, &escrow.token);
+            token_client.transfer(&env.current_contract_address(), &caller, &escrow.amount);
+            escrow.state = EscrowState::Refunded;
+            increment_counter(&env, &DataKey::TotalRefunded)?;
+        } else {
+            return Err(ContractError::InvalidState);
         }
 
         save_escrow(&env, escrow_id, &escrow);
@@ -1217,7 +1275,8 @@ impl Escrow {
 
         // Require both parties to sign: a mutual cancellation is only valid with
         // the explicit consent of both the seller and the buyer.
-        escrow.seller.require_auth();
+        let seller_addr = escrow.payees.get(0).unwrap().address.clone();
+        seller_addr.require_auth();
         buyer.require_auth();
 
         // Only a funded, unshipped escrow can be mutually cancelled. Once it has
@@ -1258,6 +1317,7 @@ impl Escrow {
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
 
+        let first_payee = escrow.payees.get(0).unwrap().clone();
         // Check if caller is any of the payees
         let is_authorized = {
             let mut found = false;
@@ -1467,7 +1527,7 @@ impl Escrow {
 
         escrow.state = EscrowState::PendingFinalization;
         let recipient = match resolution {
-            ResolutionType::Release => escrow.seller.clone(),
+            ResolutionType::Release => escrow.payees.get(0).unwrap().address.clone(),
             ResolutionType::Refund => escrow
                 .buyer
                 .clone()
@@ -1611,7 +1671,7 @@ impl Escrow {
         emit_auto_released(
             &env,
             escrow_id,
-            escrow.seller,
+            escrow.payees.get(0).unwrap().address.clone(),
             escrow.amount,
             escrow.fee_bps,
             prev_state.clone(),
@@ -2231,7 +2291,14 @@ impl Escrow {
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
 
-        if caller != escrow.seller {
+        let mut is_payee = false;
+        for i in 0..escrow.payees.len() {
+            if caller == escrow.payees.get(i).unwrap().address {
+                is_payee = true;
+                break;
+            }
+        }
+        if !is_payee {
             return Err(ContractError::NotAuthorized);
         }
 
@@ -2264,14 +2331,20 @@ impl Escrow {
 
         let mut escrow_ids = Vec::new(&env);
         for input in escrows.into_iter() {
+            let mut payees = Vec::new(&env);
+            payees.push_back(Payee {
+                address: seller.clone(),
+                bps: 10_000,
+            });
             let id = create_escrow_internal(
                 &env,
-                seller.clone(),
+                payees,
                 input.buyer,
                 input.resolver,
                 input.token,
                 input.amount,
                 input.fee_bps,
+                0, // resolver_fee_bps
                 input.shipping_window,
                 input.notes,
             )?;
@@ -2302,8 +2375,142 @@ impl Escrow {
         Ok(())
     }
 
+
     pub fn get_accumulated_fees(env: Env, token: Address) -> i128 {
         env.storage().instance().get(&DataKey::AccumulatedFees(token)).unwrap_or(0)
+    }
+
+    /// Executes multiple contract calls in a single transaction, reducing
+    /// transaction count. Each element of `calls` specifies the function name
+    /// and its serialised arguments; the function is invoked on this contract
+    /// directly to avoid Soroban's re-entrancy limitations.
+    /// Return values for each call are collected in order and returned as a `Vec<Val>`.
+    pub fn multicall(env: Env, calls: Vec<ContractCall>) -> Result<Vec<Val>, ContractError> {
+        ensure_not_paused(&env)?;
+        let mut results = Vec::new(&env);
+
+        let s_initialize = Symbol::new(&env, "initialize");
+        let s_pause_contract = Symbol::new(&env, "pause_contract");
+        let s_unpause_contract = Symbol::new(&env, "unpause_contract");
+        let s_withdraw_fees = Symbol::new(&env, "withdraw_fees");
+        let s_create_escrow = Symbol::new(&env, "create_escrow");
+        let s_fund_escrow = Symbol::new(&env, "fund_escrow");
+        let s_mark_shipped = Symbol::new(&env, "mark_shipped");
+        let s_confirm_delivery = Symbol::new(&env, "confirm_delivery");
+        let s_raise_dispute = Symbol::new(&env, "raise_dispute");
+        let s_resolve_dispute = Symbol::new(&env, "resolve_dispute");
+        let s_auto_release = Symbol::new(&env, "auto_release");
+        let s_get_escrow = Symbol::new(&env, "get_escrow");
+        let s_get_dispute = Symbol::new(&env, "get_dispute");
+        let s_get_fee_config = Symbol::new(&env, "get_fee_config");
+        let s_set_arbitration_fee = Symbol::new(&env, "set_arbitration_fee");
+        let s_get_arbitration_fee = Symbol::new(&env, "get_arbitration_fee");
+        let s_rotate_resolver = Symbol::new(&env, "rotate_resolver");
+        let s_cancel_escrow = Symbol::new(&env, "cancel_escrow");
+
+        for call in calls.into_iter() {
+            let res_val: Val = if call.function == s_fund_escrow {
+                let escrow_id: u64 = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let buyer: Address = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::fund_escrow(env.clone(), escrow_id, buyer)?;
+                ().into_val(&env)
+            } else if call.function == s_get_escrow {
+                let escrow_id: u64 = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let res = Self::get_escrow(env.clone(), escrow_id)?;
+                res.into_val(&env)
+            } else if call.function == s_mark_shipped {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let escrow_id: u64 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let tracking_id: String = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::mark_shipped(env.clone(), caller, escrow_id, tracking_id)?;
+                ().into_val(&env)
+            } else if call.function == s_confirm_delivery {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let escrow_id: u64 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::confirm_delivery(env.clone(), caller, escrow_id)?;
+                ().into_val(&env)
+            } else if call.function == s_raise_dispute {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let escrow_id: u64 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let reason: Symbol = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let description: String = call.args.get(3).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let evidence_hash: BytesN<32> = call.args.get(4).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::raise_dispute(env.clone(), caller, escrow_id, reason, description, evidence_hash)?;
+                ().into_val(&env)
+            } else if call.function == s_resolve_dispute {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let escrow_id: u64 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let resolution: ResolutionType = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::resolve_dispute(env.clone(), caller, escrow_id, resolution)?;
+                ().into_val(&env)
+            } else if call.function == s_auto_release {
+                let escrow_id: u64 = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::auto_release(env.clone(), escrow_id)?;
+                ().into_val(&env)
+            } else if call.function == s_cancel_escrow {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let escrow_id: u64 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::cancel_escrow(env.clone(), caller, escrow_id)?;
+                ().into_val(&env)
+            } else if call.function == s_rotate_resolver {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let escrow_id: u64 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let new_resolver: Address = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::rotate_resolver(env.clone(), caller, escrow_id, new_resolver)?;
+                ().into_val(&env)
+            } else if call.function == s_initialize {
+                let admin: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let fee_collector: Address = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let arbitration_fee_bps: u32 = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::initialize(env.clone(), admin, fee_collector, arbitration_fee_bps)?;
+                ().into_val(&env)
+            } else if call.function == s_pause_contract {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::pause_contract(env.clone(), caller)?;
+                ().into_val(&env)
+            } else if call.function == s_unpause_contract {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::unpause_contract(env.clone(), caller)?;
+                ().into_val(&env)
+            } else if call.function == s_withdraw_fees {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let token: Address = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let to: Address = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let amount: i128 = call.args.get(3).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::withdraw_fees(env.clone(), caller, token, to, amount)?;
+                ().into_val(&env)
+            } else if call.function == s_get_dispute {
+                let escrow_id: u64 = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let res = Self::get_dispute(env.clone(), escrow_id);
+                res.into_val(&env)
+            } else if call.function == s_get_fee_config {
+                let res = Self::get_fee_config(env.clone());
+                res.into_val(&env)
+            } else if call.function == s_set_arbitration_fee {
+                let caller: Address = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let fee_bps: u32 = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                Self::set_arbitration_fee(env.clone(), caller, fee_bps)?;
+                ().into_val(&env)
+            } else if call.function == s_get_arbitration_fee {
+                let res = Self::get_arbitration_fee(env.clone());
+                res.into_val(&env)
+            } else if call.function == s_create_escrow {
+                let payees: Vec<Payee> = call.args.get(0).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let buyer: Option<Address> = call.args.get(1).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let resolver: Address = call.args.get(2).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let token: Address = call.args.get(3).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let amount: i128 = call.args.get(4).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let fee_bps: u32 = call.args.get(5).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let resolver_fee_bps: u32 = call.args.get(6).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let shipping_window: u64 = call.args.get(7).ok_or(ContractError::InvalidAmount)?.try_into_val(&env).map_err(|_| ContractError::InvalidAmount)?;
+                let res = Self::create_escrow(env.clone(), payees, buyer, resolver, token, amount, fee_bps, resolver_fee_bps, shipping_window)?;
+                res.into_val(&env)
+            } else {
+                return Err(ContractError::NotAuthorized);
+            };
+            results.push_back(res_val);
+        }
+        Ok(results)
     }
 }
 
