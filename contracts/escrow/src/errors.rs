@@ -78,14 +78,4 @@ pub enum ContractError {
     /// Returned when a `fund_escrow_tranche` payment would push the escrow's
     /// funded total past its agreed `amount`.
     TrancheExceedsRemaining = 30,
-    /// Returned when a token is not in the allowlist.
-    TokenNotAllowed = 25,
-    /// Returned when attempting to finalize a dispute that is not in PendingFinalization state.
-    NotPendingFinalization = 26,
-    /// Returned when the appeal window is still active.
-    AppealWindowActive = 27,
-    /// Returned when the platform fee exceeds the maximum allowed.
-    PlatformFeeExceedsMax = 28,
-    /// Returned when an escrow amount is below the minimum allowed limit.
-    AmountBelowMinimum = 29,
 }
