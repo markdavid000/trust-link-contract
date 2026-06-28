@@ -1363,6 +1363,37 @@ impl Escrow {
         Ok(())
     }
 
+    pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
+        // SECURITY:
+        // Authenticate before any state reads.
+        buyer.require_auth();
+
+        ensure_not_paused(&env)?;
+
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        if escrow.state != EscrowState::Pending {
+            return Err(ContractError::InvalidState);
+        }
+
+        escrow.buyer = Some(buyer.clone());
+        escrow.state = EscrowState::Funded;
+        escrow.funded_at = env.ledger().timestamp();
+        escrow.dispute_deadline = escrow
+            .funded_at
+            .checked_add(DISPUTE_WINDOW)
+            .ok_or(ContractError::ArithmeticOverflow)?;
+
+        let token_client = token::Client::new(&env, &escrow.token);
+        token_client.transfer(&buyer, &env.current_contract_address(), &escrow.amount);
+
+        save_escrow(&env, escrow_id, &escrow);
+        emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
+        Ok(())
+    }
+
+    /// Seller marks an escrow as shipped. Transitions Funded → Shipped.
+    pub fn mark_shipped(env: Env, caller: Address, escrow_id: u64, tracking_id: String) -> Result<(), ContractError> {
     /// Cancels an escrow. Callable by buyer or seller depending on state.
     /// Retrieves messages for a given escrow with pagination.
     /// `start` is the zero‑based index of the first message to return.
@@ -1806,6 +1837,70 @@ impl Escrow {
         Ok(())
     }
 
+    pub fn co_signed_release(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
+        // SECURITY:
+        // Authenticate before any state reads.
+        caller.require_auth();
+
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        // Require explicit auth from both seller and buyer in the same transaction.
+        escrow.seller.require_auth();
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+        buyer.require_auth();
+
+        // Allow early release from Funded or Shipped states, but not if disputed.
+        if escrow.state != EscrowState::Funded && escrow.state != EscrowState::Shipped {
+            return Err(ContractError::InvalidState);
+        }
+
+        if load_dispute(&env, escrow_id).is_ok() {
+            return Err(ContractError::InvalidState);
+        }
+
+        let fee_config = read_fee_config(&env);
+        let fee_collector: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeCollector)
+            .expect("fee collector not set");
+
+        transfer_with_protocol_fee(
+            &env,
+            &escrow.token,
+            &escrow.seller,
+            &fee_collector,
+            escrow.amount,
+            fee_config.protocol_fee_bps,
+        )?;
+
+        let mut updated = escrow;
+        updated.state = EscrowState::Completed;
+
+        save_escrow(&env, escrow_id, &updated);
+        increment_counter(&env, &DataKey::TotalCompleted)?;
+        emit_escrow_completed(
+            &env,
+            escrow_id,
+            updated.seller.clone(),
+            updated.amount,
+            fee_config.protocol_fee_bps,
+        );
+        Ok(())
+    }
+
+    pub fn raise_dispute(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        reason: soroban_sdk::Symbol,
+        description: soroban_sdk::String,
+        evidence_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError> {
+        // SECURITY:
+        // Authenticate before any state reads.
+        caller.require_auth();
 
 
     pub fn resolve_dispute(
@@ -2573,6 +2668,54 @@ impl Escrow {
         result
     }
 
+    /// Batch view: return escrows for the supplied IDs in the same order.
+    /// Missing IDs return None in the corresponding slot.
+    pub fn get_escrows_by_ids(env: Env, ids: soroban_sdk::Vec<u64>) -> soroban_sdk::Vec<Option<EscrowData>> {
+        let mut result: soroban_sdk::Vec<Option<EscrowData>> = soroban_sdk::Vec::new(&env);
+        for i in 0..ids.len() {
+            let id = ids.get(i).expect("index in range");
+            match load_escrow(&env, id) {
+                Ok(escrow) => result.push_back(Some(escrow)),
+                Err(_) => result.push_back(None),
+            }
+        }
+        result
+    }
+
+    /// Returns the current fee configuration as a read-only view.
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        read_fee_config(&env)
+    }
+
+    /// Returns the current contract configuration as a read-only view.
+    pub fn get_contract_config(env: Env) -> ContractConfig {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+
+        let fee_bps = read_fee_config(&env).protocol_fee_bps;
+
+        let fee_collector: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeCollector)
+            .expect("fee collector not set");
+
+        let current_counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(1);
+        let escrow_count = current_counter.saturating_sub(1);
+
+        ContractConfig {
+            admin,
+            fee_bps,
+            fee_collector,
+            escrow_count,
+        }
     /// Retrieves all escrow IDs associated with a specific vendor.
     pub fn get_escrows_by_vendor(env: Env, vendor: Address) -> Vec<u64> {
         storage::read_vendor_escrow_index(&env, &vendor)
@@ -3122,11 +3265,30 @@ impl Escrow {
 }
 
 mod test;
+mod test_co_signed_release;
+mod test_get_escrows_by_ids;
+mod test_edge_cases;
+mod test_withdraw_fees;
+mod test_dispute;
+mod test_escrow_id;
+mod test_resolution;
+mod test_pause;
+mod test_overflow;
+mod test_dispute_deadline_overflow;
+mod test_fee_minimum;
+mod test_minimum_amount_guard;
+mod test_fee_calculation_accuracy;
+mod test_arbitration_fee;
+mod test_fee_config;
+mod test_helpers;
 mod test_admin;
 mod test_admin_rotation;
 mod test_arbitration_fee;
 mod test_auth_ordering;
 mod test_auto_release;
+mod test_auto_release_additional;
+mod test_initialize_twice;
+mod test_initialize_zero_admin;
 mod test_cancel_restrictions;
 mod test_concurrent_vendor_escrows;
 mod test_contract_config;
