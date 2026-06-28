@@ -41,31 +41,34 @@ fn test_get_escrows_by_vendor_multiple() {
 
     // Create escrows for vendor 1
     let id1 = client.create_escrow(
-        &vendor_1,
+        &single_payee(&env, &vendor_1),
         &None::<Address>,
         &resolver,
         &token,
         &1000_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id2 = client.create_escrow(
-        &vendor_1,
+        &single_payee(&env, &vendor_1),
         &None::<Address>,
         &resolver,
         &token,
         &2000_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
 
     // Create escrow for vendor 2
     let id3 = client.create_escrow(
-        &vendor_2,
+        &single_payee(&env, &vendor_2),
         &None::<Address>,
         &resolver,
         &token,
         &3000_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -96,18 +99,19 @@ fn test_vendor_escrow_data_integrity_and_state_transitions() {
 
     // Create
     let id = client.create_escrow(
-        &vendor,
+        &single_payee(&env, &vendor),
         &None::<Address>,
         &resolver,
         &token,
         &1000_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
 
     // Assert initial state and data integrity
     let escrow = client.get_escrow(&id);
-    assert_eq!(escrow.seller, vendor);
+    assert_eq!(escrow.payees.get(0).unwrap().address, vendor);
     assert_eq!(escrow.state, EscrowState::Pending);
     assert_eq!(escrow.amount, 1000);
 

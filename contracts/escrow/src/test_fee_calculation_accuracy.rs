@@ -434,7 +434,8 @@ fn test_dispute_allocations_include_protocol_fee() {
 
     // Create mock escrow with 1,000,000 stroops and 100 bps (1%) fee
     let escrow = EscrowData {
-        seller: seller.clone(),
+        payees: single_payee(&env, &seller),
+        resolver_fee_bps: 0,
         buyer: Some(buyer.clone()),
         resolver: resolver.clone(),
         token: token.clone(),
@@ -499,7 +500,8 @@ fn test_dispute_allocations_zero_fee_no_fee_transfer() {
     let fee_collector = Address::generate(&env);
 
     let escrow = EscrowData {
-        seller: seller.clone(),
+        payees: single_payee(&env, &seller),
+        resolver_fee_bps: 0,
         buyer: Some(buyer.clone()),
         resolver: resolver.clone(),
         token: token.clone(),

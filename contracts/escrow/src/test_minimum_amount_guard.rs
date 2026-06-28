@@ -29,11 +29,12 @@ fn test_create_escrow_zero_amount_fails() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &0_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -52,11 +53,12 @@ fn test_create_escrow_below_minimum_fails() {
 
     let below_minimum = MIN_ESCROW_AMOUNT - 1;
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &below_minimum,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -76,11 +78,12 @@ fn test_create_escrow_at_minimum_succeeds() {
     mint(&env, &token, &buyer, MIN_ESCROW_AMOUNT);
 
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &MIN_ESCROW_AMOUNT,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -101,11 +104,12 @@ fn test_create_escrow_above_minimum_succeeds() {
     mint(&env, &token, &buyer, above_minimum);
 
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &above_minimum,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );

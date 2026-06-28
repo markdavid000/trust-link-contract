@@ -40,12 +40,13 @@ fn test_arbitration_fee_deduction_on_resolve_release() {
     let fee_bps = 200; // 2%
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &amount,
         &fee_bps,
+        &0_u32,
         &3600_u64,
     );
 
@@ -103,12 +104,13 @@ fn test_arbitration_fee_deduction_on_resolve_refund() {
     let fee_bps = 300; // 3%
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &amount,
         &fee_bps,
+        &0_u32,
         &3600_u64,
     );
 

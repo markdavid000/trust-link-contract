@@ -38,11 +38,12 @@ fn setup() -> Fx {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token_addr,
         &500_i128,
+        &0_u32,
         &0_u32,
         &0_u64,
     );
@@ -161,11 +162,12 @@ fn terminal_state_rejected() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&fx.env, &seller),
         &None::<Address>,
         &resolver,
         &token_addr,
         &100_i128,
+        &0_u32,
         &0_u32,
         &0_u64,
     );

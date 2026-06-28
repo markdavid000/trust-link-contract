@@ -48,12 +48,13 @@ fn test_fee_calculation_max_escrow_amount() {
     let fee_bps = 300; // 3%
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &amount,
         &fee_bps,
+        &0_u32,
         &3600_u64,
     );
 
@@ -95,23 +96,25 @@ fn test_create_escrow_amount_exceeds_maximum() {
 
     let amount = MAX_ESCROW_AMOUNT + 1;
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &amount,
         &300,
+        &0_u32,
         &3600_u64,
     );
     assert_eq!(res, Err(Ok(ContractError::AmountExceedsMaximum)));
 
     let res2 = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &i128::MAX,
         &300,
+        &0_u32,
         &3600_u64,
     );
     assert_eq!(res2, Err(Ok(ContractError::AmountExceedsMaximum)));
@@ -127,23 +130,25 @@ fn test_create_escrow_invalid_amount() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &0,
         &200,
+        &0_u32,
         &3600,
     );
     assert!(matches!(res, Err(Ok(ContractError::InvalidAmount))));
 
     let res2 = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &-1,
         &200,
+        &0_u32,
         &3600,
     );
     assert!(matches!(res2, Err(Ok(ContractError::InvalidAmount))));
@@ -159,21 +164,23 @@ fn test_fee_exceeds_max_clean_error() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000,
         &301,
+        &0_u32,
         &3600,
     );
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000,
         &10_001,
+        &0_u32,
         &3600,
     );
     assert!(matches!(res, Err(Ok(ContractError::FeeExceedsMax))));
@@ -194,22 +201,24 @@ fn test_addition_overflow_escrow_counter() {
     });
 
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000,
         &300,
+        &0_u32,
         &3600,
     );
     assert_eq!(res, Err(Ok(ContractError::ArithmeticError)));
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000,
         &300,
+        &0_u32,
         &3600,
     );
     assert_eq!(res, Err(Ok(ContractError::ArithmeticError)));
@@ -227,22 +236,24 @@ fn test_addition_overflow_shipping_window() {
     mint_tokens(&env, &token, &buyer, amount);
 
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &amount,
         &300,
+        &0_u32,
         &u64::MAX,
     );
     env.ledger().set_timestamp(1000);
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &amount,
         &300,
+        &0_u32,
         &u64::MAX,
     );
     client.fund_escrow(&escrow_id, &buyer);

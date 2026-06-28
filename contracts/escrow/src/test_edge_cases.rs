@@ -87,12 +87,13 @@ fn test_buyer_index_populated_on_cancel_by_buyer() {
 
     // Create a Pending escrow that names the buyer up front.
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &1000_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
 
@@ -173,24 +174,26 @@ fn test_min_escrow_amount_rejects_dust_prone_amount() {
     // 99 stroops, 1% fee — the exact case from the bug report.
     // MIN_ESCROW_AMOUNT = 1, so 99 is above the minimum and should succeed for creation.
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &99_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
     assert!(result.is_ok());
 
     // One stroop below the minimum is still rejected.
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &0_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
     assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));

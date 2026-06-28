@@ -78,4 +78,12 @@ pub enum ContractError {
     /// Returned when a `fund_escrow_tranche` payment would push the escrow's
     /// funded total past its agreed `amount`.
     TrancheExceedsRemaining = 30,
+    /// Returned when a token is not in the configured allowlist while the
+    /// allowlist is enabled.
+    TokenNotAllowed = 31,
+    /// Returned when an escrow amount is below the configured minimum.
+    AmountBelowMinimum = 32,
+    /// Returned when an action is attempted against an escrow that has
+    /// passed its pending-funding expiry window.
+    EscrowExpired = 33,
 }

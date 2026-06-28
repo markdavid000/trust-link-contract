@@ -99,12 +99,17 @@ fn test_happy_path_escrow_lifecycle() {
 
     // 1. Create Escrow
     let escrow_id = fx.client.create_escrow(
-        &fx.seller,
+        &{
+            let mut payees = soroban_sdk::Vec::new(&fx.env);
+            payees.push_back(trustlink_escrow::Payee { address: fx.seller.clone(), bps: 10_000 });
+            payees
+        },
         &None::<soroban_sdk::Address>,
         &fx.resolver,
         &fx.token_addr,
         &amount,
-        &100_u32,  // 1% escrow fee
+        &100_u32,
+        &0_u32,
         &3600_u64, // shipping window
     );
 

@@ -43,48 +43,52 @@ fn test_amount_limits_enforced() {
 
     // Test below minimum
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &499,
         &100,
+        &0_u32,
         &3600,
     );
     assert_eq!(res, Err(Ok(ContractError::AmountBelowMinimum)));
 
     // Test exactly minimum
     let id1 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &500,
         &100,
+        &0_u32,
         &3600,
     );
     assert_eq!(id1, 1);
 
     // Test exactly maximum
     let id2 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &5000,
         &100,
+        &0_u32,
         &3600,
     );
     assert_eq!(id2, 2);
 
     // Test above maximum
     let res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &5001,
         &100,
+        &0_u32,
         &3600,
     );
     assert_eq!(res, Err(Ok(ContractError::AmountExceedsMaximum)));

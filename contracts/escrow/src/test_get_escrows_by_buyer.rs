@@ -42,12 +42,13 @@ fn test_get_escrows_by_buyer() {
 
     // Create 1 pending escrow (no buyer yet)
     let _id4 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &4000_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
 
@@ -83,12 +84,13 @@ fn test_buyer_index_populated_on_fund() {
     mint_tokens(&env, &token, &buyer, 1000);
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
     client.fund_escrow(&id, &buyer);

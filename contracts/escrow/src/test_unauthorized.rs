@@ -128,14 +128,16 @@ fn create_escrow_rejects_resolver_equal_to_seller() {
 
     assert_eq!(
         client.try_create_escrow(
-            &seller,
-            &None::<Address>,
-            &seller, // resolver == seller
+        &single_payee(&env, &seller),
+        &None::<Address>,
+        &seller,
+        // resolver == seller
             &token,
-            &100_i128,
-            &0_u32,
-            &3600_u64,
-        ),
+        &100_i128,
+        &0_u32,
+        &0_u32,
+        &3600_u64,
+    ),
         Err(Ok(ContractError::ConflictingRoles)),
     );
 }
@@ -153,11 +155,12 @@ fn fund_escrow_rejects_buyer_equal_to_seller() {
     soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&seller, &1000_i128);
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -181,11 +184,12 @@ fn fund_escrow_rejects_buyer_equal_to_resolver() {
     soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&resolver, &1000_i128);
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );

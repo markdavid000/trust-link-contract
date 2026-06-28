@@ -47,12 +47,13 @@ fn test_unauthorized_create_escrow_fails_early() {
 
     // Will panic on `seller.require_auth()` instead of `ensure_not_paused`
     client.create_escrow(
-        &fake_seller,
+        &single_payee(&env, &fake_seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000,
         &100,
+        &0_u32,
         &86400,
     );
 }

@@ -40,7 +40,14 @@ fn setup() -> Fx {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let escrow_id = client.create_escrow(
-        &seller, &None::<Address>, &resolver, &token_addr, &1_000_i128, &0_u32, &0_u64,
+        &single_payee(&env, &seller),
+        &None::<Address>,
+        &resolver,
+        &token_addr,
+        &1_000_i128,
+        &0_u32,
+        &0_u32,
+        &0_u64,
     );
     token::StellarAssetClient::new(&env, &token_addr).mint(&buyer, &1_000_i128);
 

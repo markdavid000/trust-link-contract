@@ -27,12 +27,17 @@ fn test_unauthorized_attacker_cannot_fund_escrow() {
 
     // Create the escrow.
     let escrow_id = client.create_escrow(
-        &seller,
+        &{
+            let mut payees = soroban_sdk::Vec::new(&env);
+            payees.push_back(trustlink_escrow::Payee { address: seller.clone(), bps: 10_000 });
+            payees
+        },
         &None::<Address>,
         &resolver,
         &token_addr,
         &amount,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
 

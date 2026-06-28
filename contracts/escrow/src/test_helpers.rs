@@ -5,6 +5,8 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token, Address, Env,
 };
+use crate::Payee;
+use soroban_sdk::Vec;
 
 pub fn setup_contract(env: &Env) -> (Address, EscrowClient, Address, Address) {
     let contract_id = env.register(Escrow, ());
@@ -37,12 +39,13 @@ pub fn create_funded_escrow(
 ) -> u64 {
     mint_token(env, token, buyer, amount);
     let id = client.create_escrow(
-        seller,
+        &single_payee(env, seller),
         &None::<Address>,
         resolver,
         token,
         &amount,
         &fee_bps,
+        &0_u32,
         &shipping_window,
     );
     client.fund_escrow(&id, buyer);
@@ -73,4 +76,16 @@ pub fn create_funded_milestone_escrow(
     );
     client.fund_escrow(&id, buyer);
     id
+}
+
+/// Wraps a single address into a one-entry, 100%-bps payees vec, so existing
+/// tests written for the old single-seller create_escrow signature don't
+/// need to be rewritten field-by-field for the new multi-payee model.
+pub fn single_payee(env: &Env, address: &Address) -> Vec<Payee> {
+    let mut payees = Vec::new(env);
+    payees.push_back(Payee {
+        address: address.clone(),
+        bps: 10_000,
+    });
+    payees
 }

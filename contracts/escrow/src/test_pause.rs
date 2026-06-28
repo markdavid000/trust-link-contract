@@ -47,11 +47,12 @@ fn test_create_escrow_blocked_when_paused() {
     let client = EscrowClient::new(&env, &contract_id);
     client.pause_contract(&admin);
     let result = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -63,11 +64,12 @@ fn test_fund_escrow_blocked_when_paused() {
     let (env, admin, seller, buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -81,11 +83,12 @@ fn test_pause_blocks_mutations_but_keeps_views_available() {
     let (env, admin, seller, buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -105,11 +108,12 @@ fn test_confirm_delivery_blocked_when_paused() {
     let (env, admin, seller, buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -126,11 +130,12 @@ fn test_raise_dispute_blocked_when_paused() {
     let (env, admin, seller, buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -154,11 +159,12 @@ fn test_resolve_dispute_blocked_when_paused() {
     let (env, admin, seller, buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -183,11 +189,12 @@ fn test_auto_release_blocked_when_paused() {
     let (env, admin, seller, buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &1_u64,
     );
@@ -215,11 +222,12 @@ fn test_read_only_views_work_while_paused() {
     let (env, admin, seller, _buyer, resolver, token, contract_id) = setup_env();
     let client = EscrowClient::new(&env, &contract_id);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -250,11 +258,12 @@ fn test_unpause_resumes_operations() {
     client.pause_contract(&admin);
     client.unpause_contract(&admin);
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -264,12 +273,13 @@ fn test_unpause_resumes_operations() {
 
     mint_tokens(&env, &token, &buyer, 1_000);
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
     client.pause_contract(&admin);
@@ -283,14 +293,15 @@ fn test_unpause_resumes_operations() {
         .is_err());
     assert!(client
         .try_create_escrow(
-            &seller,
-            &None::<Address>,
-            &resolver,
-            &token,
-            &100_i128,
-            &100_u32,
-            &3600_u64
-        )
+        &single_payee(&env, &seller),
+        &None::<Address>,
+        &resolver,
+        &token,
+        &100_i128,
+        &100_u32,
+        &0_u32,
+        &3600_u64,
+    )
         .is_err());
     assert!(client.try_fund_escrow(&escrow_id, &buyer).is_err());
     assert!(client.try_confirm_delivery(&buyer, &escrow_id).is_err());
@@ -311,12 +322,13 @@ fn test_unpause_resumes_operations() {
     client.unpause_contract(&admin);
     mint_tokens(&env, &token, &buyer, 100);
     let second_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &50_i128,
         &50_u32,
+        &0_u32,
         &3600_u64,
     );
     assert_eq!(second_id, 3);

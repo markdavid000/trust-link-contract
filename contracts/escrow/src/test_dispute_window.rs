@@ -41,11 +41,12 @@ fn setup_funded_and_shipped() -> Fx {
 
     let amount: i128 = 1_000;
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token_addr,
         &amount,
+        &0_u32,
         &0_u32,
         &0_u64,
     );

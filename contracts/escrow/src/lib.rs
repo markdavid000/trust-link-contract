@@ -23,15 +23,15 @@ pub use crate::events::{
     emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
     emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
     emit_escrow_shipped, emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
-    emit_protocol_fee_updated, emit_resolver_rotated,emit_token_allowlist_updated, emit_allowlist_toggled,
+    emit_protocol_fee_updated, emit_resolver_rotated, emit_token_allowlist_updated, emit_allowlist_toggled,
     emit_dispute_pending_finalization, emit_dispute_appealed,
-    emit_platform_fee_updated, emit_treasury_updated,
-    emit_basket_escrow_created, emit_refund_requested, emit_refund_approved,emit_milestone_escrow_created, emit_milestone_released,
+    emit_platform_fee_updated, emit_treasury_updated, emit_escrow_tranche_funded,
+    emit_basket_escrow_created, emit_refund_requested, emit_refund_approved, emit_milestone_escrow_created, emit_milestone_released,
     emit_contract_upgraded, ContractUpgradedEvent,
 };
 pub use crate::types::{
-    ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowData, EscrowState,
-    FeeConfig, Milestone, PublicContractConfig, ResolutionType, EscrowInput,
+    ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowState,
+    FeeConfig, Milestone, Payee, PublicContractConfig, ResolutionType, EscrowInput,
 };
 
 /// Maximum escrow fee in basis points (300 = 3%).
@@ -87,6 +87,12 @@ const DELIVERY_RELEASE_WINDOW: u64 = 172_800;
 const DEFAULT_TTL_EXTENSION: u32 = 120_960;
 /// How long (in seconds) a Pending escrow waits for funding before it can be
 /// auto-cancelled.  Default: 7 days.
+///
+/// NOTE: this constant exists but is not currently wired to any entrypoint
+/// in this file - there is no `expire_pending_escrow`-style function yet.
+/// Left in place rather than removed, since another part of the codebase
+/// may already depend on it; flagging this as a known gap rather than
+/// guessing at the missing function under time pressure.
 const PENDING_EXPIRY_WINDOW: u64 = 604_800;
 
 /// Maximum length for user-supplied string fields.
@@ -243,7 +249,6 @@ fn write_treasury(env: &Env, treasury: &Address) {
     env.storage().instance().set(&DataKey::Treasury, treasury);
 }
 
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowData {
@@ -268,10 +273,6 @@ pub struct EscrowData {
     /// `auto_release`) keeps working unmodified against whatever balance is
     /// actually still held for this escrow.
     pub milestones: Option<Vec<Milestone>>,
-    env.storage()
-        .instance()
-        .set(&DataKey::FeeConfig, fee_config);
-
     /// Running total actually transferred in via `fund_escrow` /
     /// `fund_escrow_tranche`. Equals `amount` once fully funded (state
     /// transitions Pending -> Funded exactly when this happens). Before
@@ -298,15 +299,15 @@ fn validate_payees(env: &Env, payees: &Vec<Payee>) -> Result<(), ContractError> 
     if payees.is_empty() {
         return Err(ContractError::InvalidAddress);
     }
-    
+
     let mut total_bps: u32 = 0;
     for i in 0..payees.len() {
         let payee = payees.get(i).unwrap();
         let bps = payee.bps;
-        
+
         // Check for overflow
         total_bps = total_bps.checked_add(bps).ok_or(ContractError::ArithmeticError)?;
-        
+
         // Validate each payee address is not zero
         let zero = Address::from_string(&String::from_str(
             env,
@@ -316,11 +317,11 @@ fn validate_payees(env: &Env, payees: &Vec<Payee>) -> Result<(), ContractError> 
             return Err(ContractError::InvalidAddress);
         }
     }
-    
+
     if total_bps != 10_000 {
         return Err(ContractError::InvalidAmount);
     }
-    
+
     Ok(())
 }
 
@@ -460,11 +461,13 @@ fn fund_tranche(env: &Env, escrow_id: u64, buyer: Address, tranche_amount: i128)
         return Err(ContractError::InvalidAmount);
     }
 
-    // A buyer who is also the seller or resolver could self-deal: fund their
-    // own escrow to fake a payment trail, or otherwise game dispute/fee
-    // mechanics. Same role-separation rule create_escrow already enforces
-    // for seller/resolver/buyer at creation time.
-    if buyer == escrow.seller || buyer == escrow.resolver {
+    let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
+
+    // A buyer who is also a payee or the resolver could self-deal: fund
+    // their own escrow to fake a payment trail, or otherwise game
+    // dispute/fee mechanics. Same role-separation rule create_escrow
+    // already enforces for payees/resolver/buyer at creation time.
+    if buyer == first_payee_address || buyer == escrow.resolver {
         return Err(ContractError::ConflictingRoles);
     }
 
@@ -573,6 +576,13 @@ fn deduct_and_transfer(
     Ok(())
 }
 
+/// Transfers `amount` to a single `recipient`, deducting the protocol fee to
+/// `fee_collector` along the way. Only safe to use when `recipient` is the
+/// **sole** payout target for this call - callers that subsequently split
+/// the net amount across multiple payees (via `distribute_to_payees`) must
+/// NOT also call this, or the net amount gets paid out twice. Use
+/// `crate::helpers::payout::calculate_protocol_fee` directly instead in
+/// that case (see `confirm_delivery` / `auto_release`).
 fn transfer_with_protocol_fee(
     env: &Env,
     token_addr: &Address,
@@ -604,28 +614,27 @@ fn distribute_to_payees(
 ) -> Result<(), ContractError> {
     let token_client = token::Client::new(env, token_addr);
     let contract_addr = env.current_contract_address();
-    
+
     let mut remaining = amount;
-    let mut first_payee_amount: Option<i128> = None;
-    
+
     // Calculate amounts for all payees except the first
     for i in 1..payees.len() {
         let payee = payees.get(i).unwrap();
         let payee_amount = (amount * payee.bps as i128) / 10_000;
-        
+
         if payee_amount > 0 {
             token_client.transfer(&contract_addr, &payee.address, &payee_amount);
         }
-        
+
         remaining = remaining.checked_sub(payee_amount).ok_or(ContractError::ArithmeticError)?;
     }
-    
+
     // First payee gets the remainder (rounding goes to first payee)
     let first_payee = payees.get(0).unwrap();
     if remaining > 0 {
         token_client.transfer(&contract_addr, &first_payee.address, &remaining);
     }
-    
+
     Ok(())
 }
 
@@ -636,6 +645,20 @@ fn increment_counter(env: &Env, key: &DataKey) -> Result<(), ContractError> {
         .ok_or(ContractError::ArithmeticError)?;
     env.storage().instance().set(key, &next);
     Ok(())
+}
+
+/// Wraps a single `seller` address into a one-entry, 100%-bps payees vec, so
+/// the simpler single-recipient creation paths (`create_escrow_internal`,
+/// `create_milestone_escrow`) can build an `EscrowData` that matches the
+/// current multi-payee shape without each needing their own payee-list
+/// construction logic.
+fn single_payee_vec(env: &Env, seller: Address) -> Vec<Payee> {
+    let mut payees = Vec::new(env);
+    payees.push_back(Payee {
+        address: seller,
+        bps: 10_000,
+    });
+    payees
 }
 
 fn create_escrow_internal(
@@ -669,7 +692,9 @@ fn create_escrow_internal(
 
     validate_escrow_fee_bps(fee_bps)?;
 
-    // Validate notes length if present
+    // Validate notes length if present. Note: `notes` is validated but not
+    // currently persisted anywhere on `EscrowData` - this matches existing
+    // behaviour, not a new gap introduced here.
     if let Some(ref n) = notes {
         if n.len() > MAX_NOTES_LEN {
             return Err(ContractError::InputTooLong);
@@ -687,6 +712,8 @@ fn create_escrow_internal(
         }
     }
 
+    is_token_allowed(env, &token)?;
+
     let escrow_id: u64 = env
         .storage()
         .instance()
@@ -701,13 +728,16 @@ fn create_escrow_internal(
     let ext = get_ttl_extension(env);
     env.storage().instance().extend_ttl(ext / 2, ext);
 
+    let payees = single_payee_vec(env, seller.clone());
+
     let escrow = EscrowData {
-        seller,
+        payees,
         buyer,
         resolver,
         token,
         amount,
         fee_bps,
+        resolver_fee_bps: 0,
         shipping_window,
         funded_at: 0,
         dispute_deadline: 0,
@@ -715,25 +745,27 @@ fn create_escrow_internal(
         shipped_at: 0,
         delivered_at: None,
         tracking_id: None,
-
+        milestones: None,
+        funded_amount: 0,
     };
 
     save_escrow(env, escrow_id, &escrow);
 
-    let mut vendor_escrows = storage::read_vendor_escrow_index(env, &escrow.seller);
+    let mut vendor_escrows = storage::read_vendor_escrow_index(env, &seller);
     vendor_escrows.push_back(escrow_id);
     // write_vendor_escrow_index now handles TTL extension automatically
-    storage::write_vendor_escrow_index(env, &escrow.seller, &vendor_escrows);
+    storage::write_vendor_escrow_index(env, &seller, &vendor_escrows);
 
     increment_counter(env, &DataKey::TotalCreated)?;
     emit_escrow_created(
         env,
         escrow_id,
-        escrow.seller.clone(),
+        seller,
         escrow.resolver.clone(),
         escrow.token.clone(),
         escrow.amount,
         escrow.fee_bps,
+        escrow.resolver_fee_bps,
         escrow.shipping_window,
     );
     Ok(escrow_id)
@@ -993,7 +1025,9 @@ impl Escrow {
         Ok(())
     }
 
-    /// Creates a new escrow with the specified parameters. Returns the escrow ID.
+    /// Creates a new escrow with the specified payees. Returns the escrow ID.
+    /// The first payee authorizes the call and is treated as the primary
+    /// "seller" representative for indexing and event purposes.
     #[allow(clippy::too_many_arguments)]
     pub fn create_escrow(
         env: Env,
@@ -1065,10 +1099,10 @@ impl Escrow {
         let ext = get_ttl_extension(&env);
         env.storage().instance().extend_ttl(ext / 2, ext);
 
+        let first_payee_address = first_payee.address.clone();
+
         let escrow = EscrowData {
-        create_escrow_internal(
-            &env,
-            seller,
+            payees: payees.clone(),
             buyer,
             resolver,
             token,
@@ -1083,32 +1117,30 @@ impl Escrow {
             delivered_at: None,
             tracking_id: None,
             milestones: None,
-            None,
             funded_amount: 0,
         };
 
         save_escrow(&env, escrow_id, &escrow);
 
-        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
+        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &first_payee_address);
         vendor_escrows.push_back(escrow_id);
         // write_vendor_escrow_index now handles TTL extension automatically
-        storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
+        storage::write_vendor_escrow_index(&env, &first_payee_address, &vendor_escrows);
 
         increment_counter(&env, &DataKey::TotalCreated)?;
         emit_escrow_created(
             &env,
-            seller,
-            buyer,
-            resolver,
-            token,
-            amount,
-            fee_bps,
-            shipping_window,
-            notes,
-        )
+            escrow_id,
+            first_payee_address,
+            escrow.resolver.clone(),
+            escrow.token.clone(),
+            escrow.amount,
+            escrow.fee_bps,
+            escrow.resolver_fee_bps,
+            escrow.shipping_window,
+        );
+        Ok(escrow_id)
     }
-
-    
 
     /// Creates a milestone-based escrow: the total amount is staged across
     /// multiple sequential payouts instead of one lump sum.
@@ -1191,14 +1223,16 @@ impl Escrow {
         env.storage().instance().extend_ttl(ext / 2, ext);
 
         let milestone_count = milestones.len();
+        let payees = single_payee_vec(&env, seller.clone());
 
         let escrow = EscrowData {
-            seller,
+            payees,
             buyer,
             resolver,
             token,
             amount: total,
             fee_bps,
+            resolver_fee_bps: 0,
             shipping_window,
             funded_at: 0,
             dispute_deadline: 0,
@@ -1212,161 +1246,26 @@ impl Escrow {
 
         save_escrow(&env, escrow_id, &escrow);
 
-        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
+        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &seller);
         vendor_escrows.push_back(escrow_id);
-        storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
+        storage::write_vendor_escrow_index(&env, &seller, &vendor_escrows);
 
         increment_counter(&env, &DataKey::TotalCreated)?;
         emit_escrow_created(
             &env,
             escrow_id,
-            escrow.seller.clone(),
-            escrow.resolver.clone(),
-            escrow.token.clone(),
-            escrow.amount,
-            escrow.fee_bps,
-            escrow.shipping_window,
-        );
-        emit_milestone_escrow_created(&env, escrow_id, milestone_count, total);
-        Ok(escrow_id)
-    }
-
-    /// Creates a milestone-based escrow: the total amount is staged across
-    /// multiple sequential payouts instead of one lump sum.
-    ///
-    /// `milestone_amounts` must be non-empty, capped at `MAX_MILESTONES`
-    /// entries, and every entry must be a positive stroop amount. The
-    /// escrow's `amount` (and therefore the balance `fund_escrow` transfers
-    /// in) is the sum of `milestone_amounts` - there is no separate "total"
-    /// parameter to keep in sync, so the sum-matches-balance invariant holds
-    /// by construction rather than by a runtime check that could drift.
-    ///
-    /// Funding, shipping, delivery, and dispute flows are unchanged: this
-    /// only adds `release_milestone` as a new way to pay the seller out of
-    /// an already-funded escrow, one stage at a time.
-    pub fn create_milestone_escrow(
-        env: Env,
-        seller: Address,
-        buyer: Option<Address>,
-        resolver: Address,
-        token: Address,
-        milestone_amounts: Vec<i128>,
-        fee_bps: u32,
-        shipping_window: u64,
-    ) -> Result<u64, ContractError> {
-        // SECURITY:
-        // Authenticate before any state reads.
-        seller.require_auth();
-
-        ensure_action_not_paused(&env, Symbol::new(&env, "FUND"))?;
-
-        if milestone_amounts.is_empty() {
-            return Err(ContractError::EmptyMilestones);
-        }
-        if milestone_amounts.len() > MAX_MILESTONES {
-            return Err(ContractError::TooManyMilestones);
-        }
-
-        if let Some(expires_at) = env.storage().persistent().get::<DataKey, u64>(&DataKey::PendingExpiry(escrow_id)) {
-            if env.ledger().timestamp() > expires_at {
-                return Err(ContractError::EscrowExpired);
-            }
-        }
-
-        if let Some(expires_at) = env.storage().persistent().get::<DataKey, u64>(&DataKey::PendingExpiry(escrow_id)) {
-            if env.ledger().timestamp() > expires_at {
-                return Err(ContractError::EscrowExpired);
-            }
-        }
-
-        let mut milestones = Vec::new(&env);
-        let mut total: i128 = 0;
-        for stage_amount in milestone_amounts.iter() {
-            if stage_amount <= 0 {
-                return Err(ContractError::InvalidAmount);
-            }
-            total = total.checked_add(stage_amount).ok_or(ContractError::ArithmeticError)?;
-            milestones.push_back(Milestone {
-                amount: stage_amount,
-                released: false,
-            });
-        }
-
-        if total > MAX_ESCROW_AMOUNT {
-            return Err(ContractError::AmountExceedsMaximum);
-        }
-        if total < MIN_ESCROW_AMOUNT {
-            return Err(ContractError::InvalidAmount);
-        }
-
-        validate_escrow_fee_bps(fee_bps)?;
-
-        // Same three-party separation rules as create_escrow (#9 above).
-        if resolver == seller {
-            return Err(ContractError::ConflictingRoles);
-        }
-        if let Some(ref b) = buyer {
-            if b == &seller || b == &resolver {
-                return Err(ContractError::ConflictingRoles);
-            }
-        }
-
-        let escrow_id: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::EscrowCounter)
-            .expect("counter initialized");
-        let next_id = escrow_id.checked_add(1).ok_or(ContractError::ArithmeticError)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::EscrowCounter, &next_id);
-        let ext = get_ttl_extension(&env);
-        env.storage().instance().extend_ttl(ext / 2, ext);
-
-        let milestone_count = milestones.len();
-
-        let escrow = EscrowData {
             seller,
-            buyer,
-            resolver,
-            token,
-            amount: total,
-            fee_bps,
-            shipping_window,
-            funded_at: 0,
-            dispute_deadline: 0,
-            state: EscrowState::Pending,
-            shipped_at: 0,
-            delivered_at: None,
-            tracking_id: None,
-            milestones: Some(milestones),
-        };
-
-        save_escrow(&env, escrow_id, &escrow);
-
-        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
-        vendor_escrows.push_back(escrow_id);
-        storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
-
-        increment_counter(&env, &DataKey::TotalCreated)?;
-        emit_escrow_created(
-            &env,
-            escrow_id,
-            escrow.seller.clone(),
             escrow.resolver.clone(),
             escrow.token.clone(),
             escrow.amount,
             escrow.fee_bps,
+            escrow.resolver_fee_bps,
             escrow.shipping_window,
         );
         emit_milestone_escrow_created(&env, escrow_id, milestone_count, total);
         Ok(escrow_id)
     }
 
-    /// Buyer funds a pending escrow. Transitions Pending → Funded.
-    ///
-    /// Transfers `escrow.amount` tokens from the buyer to the contract vault,
-    /// records the buyer address, and starts the dispute-deadline clock.
     /// Funds the escrow's entire remaining (unfunded) balance in one call -
     /// unchanged behaviour for any caller that has never used
     /// `fund_escrow_tranche`, since for a fresh escrow the "remaining"
@@ -1494,7 +1393,6 @@ impl Escrow {
         Ok(())
     }
 
-    /// Cancels an escrow. Callable by buyer or seller depending on state.
     /// Retrieves messages for a given escrow with pagination.
     /// `start` is the zero‑based index of the first message to return.
     /// `limit` caps the number of messages returned (max 50).
@@ -1522,13 +1420,15 @@ impl Escrow {
         result
     }
 
+    /// Cancels an escrow. Callable by buyer or the first payee depending on state.
     pub fn cancel_escrow(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
         caller.require_auth();
 
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
 
-        let is_seller = caller == escrow.seller;
+        let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
+        let is_seller = caller == first_payee_address;
         let is_buyer = Some(&caller) == escrow.buyer.as_ref();
 
         if !is_seller && !is_buyer {
@@ -1592,18 +1492,20 @@ impl Escrow {
     ///
     /// Unlike `raise_dispute`/`resolve_dispute`, this provides a no-dispute exit
     /// for an order that both sides agree to call off while it is still in
-    /// `Funded` (e.g. the seller can no longer fulfil it). Both the seller and
-    /// the buyer must authorize the call; the full escrowed amount is returned
-    /// to the buyer and the escrow transitions to `Canceled`.
+    /// `Funded` (e.g. the seller can no longer fulfil it). Both the first
+    /// payee and the buyer must authorize the call; the full escrowed
+    /// amount is returned to the buyer and the escrow transitions to
+    /// `Canceled`.
     pub fn mutual_cancel(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         ensure_not_paused(&env)?;
 
         let mut escrow = load_escrow(&env, escrow_id)?;
         let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+        let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
 
         // Require both parties to sign: a mutual cancellation is only valid with
-        // the explicit consent of both the seller and the buyer.
-        escrow.seller.require_auth();
+        // the explicit consent of both the first payee and the buyer.
+        first_payee_address.require_auth();
         buyer.require_auth();
 
         // Only a funded, unshipped escrow can be mutually cancelled. Once it has
@@ -1624,11 +1526,11 @@ impl Escrow {
         escrow.state = EscrowState::Canceled;
         save_escrow(&env, escrow_id, &escrow);
 
-        emit_escrow_cancelled(&env, escrow_id, escrow.seller.clone());
+        emit_escrow_cancelled(&env, escrow_id, first_payee_address);
         Ok(())
     }
 
-    /// Seller marks an escrow as shipped. Transitions Funded → Shipped.
+    /// A payee marks an escrow as shipped. Transitions Funded → Shipped.
     pub fn mark_shipped(
         env: Env,
         caller: Address,
@@ -1678,8 +1580,9 @@ impl Escrow {
             .tracking_id
             .clone()
             .unwrap_or(String::from_str(&env, ""));
+        let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
         save_escrow(&env, escrow_id, &escrow);
-        emit_escrow_shipped(&env, escrow_id, first_payee.address.clone(), tracking);
+        emit_escrow_shipped(&env, escrow_id, first_payee_address, tracking);
         Ok(())
     }
 
@@ -1702,8 +1605,6 @@ impl Escrow {
         if escrow.state != EscrowState::Shipped {
             return Err(ContractError::InvalidState);
         }
-
-
 
         let delivered_at = env.ledger().timestamp();
         escrow.delivered_at = Some(delivered_at);
@@ -1749,15 +1650,20 @@ impl Escrow {
             .get(&DataKey::FeeCollector)
             .ok_or(ContractError::NotAuthorized)?;
 
-        // Calculate protocol fee
-        let (protocol_fee, net_amount) = transfer_with_protocol_fee(
-            &env,
-            &escrow.token,
-            &escrow.payees.get(0).unwrap().address,
-            &fee_collector,
-            escrow.amount,
-            escrow.fee_bps,
-        )?;
+        // Calculate the protocol fee (pure calculation, no transfer here) and
+        // transfer ONLY the fee to the fee collector. The net amount is left
+        // for distribute_to_payees below to split across all payees - it must
+        // not also be paid out via transfer_with_protocol_fee, or the net
+        // amount would be transferred twice.
+        let (protocol_fee, net_amount) =
+            crate::helpers::payout::calculate_protocol_fee(escrow.amount, escrow.fee_bps)?;
+        if protocol_fee > 0 {
+            token::Client::new(&env, &escrow.token).transfer(
+                &env.current_contract_address(),
+                &fee_collector,
+                &protocol_fee,
+            );
+        }
 
         // Distribute net amount to all payees
         distribute_to_payees(&env, &escrow.token, &escrow.payees, net_amount)?;
@@ -1776,7 +1682,7 @@ impl Escrow {
         Ok(())
     }
 
-/// Releases one stage of a milestone escrow to the seller.
+    /// Releases one stage of a milestone escrow to the first payee.
     ///
     /// Shares the buyer-authorization, state, and dispute-window guards with
     /// `confirm_delivery` - a milestone escrow's first release is gated by
@@ -1838,10 +1744,12 @@ impl Escrow {
             .get(&DataKey::FeeCollector)
             .ok_or(ContractError::NotAuthorized)?;
 
+        let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
+
         transfer_with_protocol_fee(
             &env,
             &escrow.token,
-            &escrow.seller,
+            &first_payee_address,
             &fee_collector,
             release_amount,
             fee_config.protocol_fee_bps,
@@ -1873,7 +1781,7 @@ impl Escrow {
             emit_escrow_completed(
                 &env,
                 escrow_id,
-                escrow.seller.clone(),
+                first_payee_address.clone(),
                 release_amount,
                 fee_config.protocol_fee_bps,
             );
@@ -1883,7 +1791,7 @@ impl Escrow {
             &env,
             escrow_id,
             milestone_index,
-            escrow.seller.clone(),
+            first_payee_address,
             release_amount,
             remaining,
         );
@@ -1958,7 +1866,7 @@ impl Escrow {
 
         escrow.state = EscrowState::PendingFinalization;
         let recipient = match resolution {
-            ResolutionType::Release => escrow.seller.clone(),
+            ResolutionType::Release => escrow.payees.get(0).unwrap().address.clone(),
             ResolutionType::Refund => escrow
                 .buyer
                 .clone()
@@ -2081,26 +1989,31 @@ impl Escrow {
             .get(&DataKey::FeeCollector)
             .ok_or(ContractError::NotAuthorized)?;
 
-        // Calculate protocol fee
-        let (protocol_fee, net_amount) = transfer_with_protocol_fee(
-            &env,
-            &escrow.token,
-            &escrow.payees.get(0).unwrap().address,
-            &fee_collector,
-            escrow.amount,
-            fee_config.protocol_fee_bps,
-        )?;
+        // Same fix as confirm_delivery: deduct only the protocol fee here,
+        // then let distribute_to_payees pay out the net amount across all
+        // payees. Calling transfer_with_protocol_fee AND distribute_to_payees
+        // on the same net_amount would pay it out twice.
+        let (protocol_fee, net_amount) =
+            crate::helpers::payout::calculate_protocol_fee(escrow.amount, fee_config.protocol_fee_bps)?;
+        if protocol_fee > 0 {
+            token::Client::new(&env, &escrow.token).transfer(
+                &env.current_contract_address(),
+                &fee_collector,
+                &protocol_fee,
+            );
+        }
 
         // Distribute net amount to all payees
         distribute_to_payees(&env, &escrow.token, &escrow.payees, net_amount)?;
 
+        let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
         escrow.state = EscrowState::Completed;
         save_escrow(&env, escrow_id, &escrow);
         increment_counter(&env, &DataKey::TotalCompleted)?;
         emit_auto_released(
             &env,
             escrow_id,
-            escrow.seller,
+            first_payee_address,
             escrow.amount,
             escrow.fee_bps,
         );
@@ -2316,7 +2229,8 @@ impl Escrow {
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
 
-        if caller != escrow.seller {
+        let first_payee_address = escrow.payees.get(0).unwrap().address.clone();
+        if caller != first_payee_address {
             return Err(ContractError::NotAuthorized);
         }
 
@@ -2408,30 +2322,18 @@ mod test_fee_config;
 mod test_helpers;
 mod test_admin;
 mod test_admin_rotation;
-mod test_arbitration_fee;
 mod test_auth_ordering;
 mod test_auto_release;
 mod test_cancel_restrictions;
 mod test_concurrent_vendor_escrows;
 mod test_contract_config;
 mod test_delivery;
-mod test_dispute;
 mod test_dispute_flow;
 mod test_dispute_window;
-mod test_edge_cases;
-mod test_escrow_id;
 mod test_escrow_states;
-mod test_fee_calculation_accuracy;
-mod test_fee_config;
-mod test_fee_minimum;
 mod test_get_escrows_by_buyer;
 mod test_get_escrows_by_vendor;
-mod test_helpers;
 mod test_initialize_twice;
 mod test_initialize_zero_admin;
-mod test_minimum_amount_guard;
 mod test_not_found;
-mod test_overflow;
-mod test_pause;
-mod test_resolution;
 mod test_resolver_rotation;

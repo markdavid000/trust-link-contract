@@ -40,11 +40,12 @@ fn full_dispute_release_to_vendor() {
     // fee_bps = 0 isolates the arbitration-fee accounting the issue specifies
     // (a non-zero protocol fee would further reduce the seller's payout).
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token_address,
         &amount,
+        &0_u32,
         &0_u32,
         &0_u64,
     );

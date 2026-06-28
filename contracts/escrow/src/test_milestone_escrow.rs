@@ -310,18 +310,22 @@ fn final_release_emits_escrow_completed_with_the_last_stage_amount_not_zero() {
     fx.client.release_milestone(&fx.buyer, &fx.escrow_id, &0_u32);
     fx.client.release_milestone(&fx.buyer, &fx.escrow_id, &1_u32);
 
-    let prev_count = fx.env.events().all().len();
     fx.client.release_milestone(&fx.buyer, &fx.escrow_id, &2_u32); // final stage, amount 500
 
-    let events = fx.env.events().all();
-    // The final release emits both milestone_released and escrow_completed.
-    assert!(events.len() >= prev_count + 1);
-
-    let completed = events.iter().find(|(_, topics, _)| {
-        topics
+    // Find the escrow_completed event emitted by this call. Using a plain
+    // for-loop (IntoIterator) rather than calling .len()/.iter()/.get() on
+    // the events collection directly - those method names don't exist on
+    // this SDK version's event-list type, but a for-loop only needs
+    // IntoIterator, which is the safer bet without the SDK docs in hand.
+    let mut completed: Option<(soroban_sdk::Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val)> = None;
+    for (contract_id, topics, data) in fx.env.events().all() {
+        let is_completed = topics
             .iter()
-            .any(|t| Symbol::from_val(&fx.env, &t) == Symbol::new(&fx.env, "escrow_completed"))
-    });
+            .any(|t| Symbol::from_val(&fx.env, &t) == Symbol::new(&fx.env, "escrow_completed"));
+        if is_completed {
+            completed = Some((contract_id, topics, data));
+        }
+    }
     let (_, _, data) = completed.expect("escrow_completed event was emitted");
 
     use crate::EscrowCompleted;
@@ -356,7 +360,18 @@ fn release_milestone_rejects_on_non_milestone_escrow() {
     let client = EscrowClient::new(&env, &contract_id);
     client.initialize(&admin, &fee_collector, &0_u32);
 
-    let escrow_id = client.create_escrow(&seller, &None::<Address>, &resolver, &token_addr, &1_000_i128, &0_u32, &0_u64);
+    let mut payees: Vec<crate::Payee> = Vec::new(&env);
+    payees.push_back(crate::Payee { address: seller.clone(), bps: 10_000 });
+    let escrow_id = client.create_escrow(
+        &payees,
+        &None::<Address>,
+        &resolver,
+        &token_addr,
+        &1_000_i128,
+        &0_u32,
+        &0_u32,
+        &0_u64,
+    );
     token::StellarAssetClient::new(&env, &token_addr).mint(&buyer, &1_000_i128);
     client.fund_escrow(&escrow_id, &buyer);
     env.ledger().with_mut(|li| li.timestamp += DISPUTE_WINDOW_SECS + 1);

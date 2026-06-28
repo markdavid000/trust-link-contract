@@ -43,11 +43,12 @@ fn setup_funded_and_shipped() -> Fx {
     let amount: i128 = 1_000;
     // shipping_window=0 isolates the dispute-window assertion the issue cares about.
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token_addr,
         &amount,
+        &0_u32,
         &0_u32,
         &0_u64,
     );
@@ -141,11 +142,12 @@ fn auto_release_fails_when_dispute_is_active() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&fx.env, &seller),
         &None::<Address>,
         &resolver,
         &token_addr,
         &500_i128,
+        &0_u32,
         &0_u32,
         &100_u64,
     );

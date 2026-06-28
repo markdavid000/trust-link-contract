@@ -41,12 +41,13 @@ fn test_fee_rounds_to_zero_on_one_stroop_confirm_delivery() {
 
     // MAX_FEE_BPS = 300 (3%) — still rounds to 0 on 1 stroop
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1_i128,
         &300_u32,
+        &0_u32,
         &3600_u64,
     );
     client.fund_escrow(&id, &buyer);
@@ -75,12 +76,13 @@ fn test_fee_rounds_to_zero_on_one_stroop_auto_release() {
     mint(&env, &token, &buyer, 1);
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1_i128,
         &300_u32,
+        &0_u32,
         &3600_u64,
     );
     client.fund_escrow(&id, &buyer);
@@ -114,12 +116,13 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_release() {
     mint(&env, &token, &buyer, 1);
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1_i128,
         &300_u32,
+        &0_u32,
         &3600_u64,
     );
     client.fund_escrow(&id, &buyer);
@@ -153,12 +156,13 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_refund() {
     mint(&env, &token, &buyer, 1);
 
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1_i128,
         &300_u32,
+        &0_u32,
         &3600_u64,
     );
     client.fund_escrow(&id, &buyer);

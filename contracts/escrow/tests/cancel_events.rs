@@ -46,11 +46,12 @@ fn seller_pending_cancel_emits_event() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1_000_i128,
+        &0_u32,
         &0_u32,
         &3_600_u64,
     );
@@ -84,11 +85,12 @@ fn buyer_funded_cancel_emits_event() {
     sac.mint(&buyer, &1_000_i128);
 
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1_000_i128,
+        &0_u32,
         &0_u32,
         &3_600_u64,
     );

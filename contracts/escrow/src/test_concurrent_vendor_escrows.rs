@@ -37,14 +37,15 @@ fn same_vendor_can_create_multiple_escrows_without_collision() {
         // Vary the amount slightly for each escrow to ensure isolated data
         let amount = 100_i128 + ((i + 1) as i128);
         let id = client.create_escrow(
-            &seller,
-            &None::<Address>,
-            &resolver,
-            &token,
-            &amount,
-            &0_u32,
-            &3600_u64,
-        );
+        &single_payee(&env, &seller),
+        &None::<Address>,
+        &resolver,
+        &token,
+        &amount,
+        &0_u32,
+        &0_u32,
+        &3600_u64,
+    );
 
         // IDs should be strictly monotonic
         assert_eq!(id, (i + 1) as u64);
@@ -63,7 +64,7 @@ fn same_vendor_can_create_multiple_escrows_without_collision() {
         let escrow = client.get_escrow(&(i as u64));
         let expected_amount = 100_i128 + (i as i128);
 
-        assert_eq!(escrow.seller, seller);
+        assert_eq!(escrow.payees.get(0).unwrap().address, seller);
         assert_eq!(escrow.amount, expected_amount);
         assert_eq!(escrow.state, EscrowState::Pending);
     }
@@ -83,29 +84,32 @@ fn escrow_storage_entries_remain_isolated() {
 
     // Create multiple escrows
     let id1 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id2 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &200_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id3 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &300_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -135,14 +139,15 @@ fn escrow_counter_remains_monotonic_under_rapid_creation() {
 
     for i in 1..=50 {
         let id = client.create_escrow(
-            &seller,
-            &None::<Address>,
-            &resolver,
-            &token,
-            &100_i128,
-            &0_u32,
-            &3600_u64,
-        );
+        &single_payee(&env, &seller),
+        &None::<Address>,
+        &resolver,
+        &token,
+        &100_i128,
+        &0_u32,
+        &0_u32,
+        &3600_u64,
+    );
         assert_eq!(id, i as u64);
     }
 }

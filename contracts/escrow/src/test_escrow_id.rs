@@ -61,14 +61,15 @@ fn test_escrow_ids_monotonic_and_unique() {
     let mut ids = Vec::new(&env);
     for i in 1..=10 {
         let id = client.create_escrow(
-            &seller,
-            &None::<Address>,
-            &resolver,
-            &token,
-            &100_i128,
-            &0_u32,
-            &3600_u64,
-        );
+        &single_payee(&env, &seller),
+        &None::<Address>,
+        &resolver,
+        &token,
+        &100_i128,
+        &0_u32,
+        &0_u32,
+        &3600_u64,
+    );
         assert_eq!(id, i as u64);
         ids.push_back(id);
     }
@@ -76,11 +77,12 @@ fn test_escrow_ids_monotonic_and_unique() {
     // Verify persistence: new client instance sees counter at 11
     let client2 = EscrowClient::new(&env, &contract_id);
     let next_id = client2.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -96,29 +98,32 @@ fn test_escrow_ids_increment_sequentially() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let id1 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
     let id2 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id3 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -137,20 +142,22 @@ fn test_cancelled_escrow_does_not_reset_counter() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let id1 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id2 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -161,11 +168,12 @@ fn test_cancelled_escrow_does_not_reset_counter() {
 
     // Create a new escrow after cancellation
     let next_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -181,20 +189,22 @@ fn test_escrow_counter_does_not_skip_after_cancellation() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let id1 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id2 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -202,20 +212,22 @@ fn test_escrow_counter_does_not_skip_after_cancellation() {
     client.cancel_escrow(&seller, &id1);
 
     let id3 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id4 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -239,29 +251,32 @@ fn test_multiple_cancellations() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     let id1 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
     let id2 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
         &0_u32,
+        &0_u32,
         &3600_u64,
     );
     let id3 = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );
@@ -270,11 +285,12 @@ fn test_multiple_cancellations() {
     client.cancel_escrow(&seller, &id2);
 
     let next_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &3600_u64,
     );

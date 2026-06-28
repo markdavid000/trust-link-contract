@@ -37,12 +37,13 @@ fn test_get_public_config() {
     let token = Address::generate(&env);
 
     client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &1000_0000000,
         &100,
+        &0_u32,
         &86400,
     );
 

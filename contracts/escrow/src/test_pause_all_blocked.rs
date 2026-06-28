@@ -43,11 +43,12 @@ fn test_pause_blocks_all_mutations() {
 
     // 1. try_create_escrow should fail
     let create_res = client.try_create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &36_00_u64,
     );
@@ -56,11 +57,12 @@ fn test_pause_blocks_all_mutations() {
     // Need a valid escrow for subsequent tests; create without pause
     client.unpause_contract(&admin);
     let escrow_id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &None::<Address>,
         &resolver,
         &token,
         &100_i128,
+        &0_u32,
         &0_u32,
         &36_00_u64,
     );

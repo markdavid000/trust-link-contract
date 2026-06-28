@@ -417,12 +417,13 @@ fn test_confirm_delivery_from_pending_state_fails() {
 
     // Create escrow with an explicit buyer so authorization passes.
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &1000_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
 
@@ -492,12 +493,13 @@ fn test_confirm_delivery_from_canceled_state_fails() {
 
     // Create escrow with an explicit buyer.
     let id = client.create_escrow(
-        &seller,
+        &single_payee(&env, &seller),
         &Some(buyer.clone()),
         &resolver,
         &token,
         &1000_i128,
         &100_u32,
+        &0_u32,
         &3600_u64,
     );
 
