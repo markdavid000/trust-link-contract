@@ -942,17 +942,44 @@ impl Escrow {
         let first_payee = payees.get(0).unwrap();
         first_payee.address.require_auth();
 
+    pub fn create_escrow_with_expiration(
+        env: Env,
+        seller: Address,
+        buyer: Option<Address>,
+        resolver: Address,
+        token: Address,
+        amount: i128,
+        fee_bps: u32,
+        shipping_window: u64,
+        expires_at: Option<u64>,
+        grace_period: u64,
+    ) -> Result<u64, ContractError> {
+        create_escrow_internal(
+            &env,
+            seller,
+            buyer,
+            resolver,
+            token,
+            amount,
+            fee_bps,
+            shipping_window,
+            expires_at,
+            grace_period,
+        )
+    }
+
+    /// Buyer funds a pending escrow. Transitions Pending → Funded.
+    ///
+    /// Transfers `escrow.amount` tokens from the buyer to the contract vault,
+    /// records the buyer address, and starts the dispute-deadline clock.
+    pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
+        buyer.require_auth();
+
         ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
 
-        if amount <= 0 {
-            return Err(ContractError::InvalidAmount);
-        }
-        if amount > MAX_ESCROW_AMOUNT {
-            return Err(ContractError::AmountExceedsMaximum);
-        }
-
-        if amount < MIN_ESCROW_AMOUNT {
-            return Err(ContractError::InvalidAmount);
+        if escrow.state != EscrowState::Pending {
+            return Err(ContractError::InvalidState);
         }
 
         validate_escrow_fee_bps(fee_bps)?;
@@ -1010,14 +1037,56 @@ impl Escrow {
         };
 
         save_escrow(&env, escrow_id, &escrow);
+        emit_escrow_funded(&env, escrow_id, buyer, escrow.amount);
+        Ok(())
+    }
 
-        let mut vendor_escrows = storage::read_vendor_escrow_index(&env, &escrow.seller);
-        vendor_escrows.push_back(escrow_id);
-        // write_vendor_escrow_index now handles TTL extension automatically
-        storage::write_vendor_escrow_index(&env, &escrow.seller, &vendor_escrows);
+    /// Buyer raises a dispute on a funded or shipped escrow.
+    ///
+    /// Transitions Funded/Shipped → Disputed, stores dispute metadata,
+    /// and emits the `dispute_raised` event.
+    pub fn raise_dispute(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        reason: Symbol,
+        description: String,
+        evidence_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
 
-        increment_counter(&env, &DataKey::TotalCreated)?;
-        emit_escrow_created(
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+        if caller != buyer {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state != EscrowState::Funded && escrow.state != EscrowState::Shipped {
+            return Err(ContractError::InvalidState);
+        }
+
+        if description.len() > MAX_DESCRIPTION_LEN {
+            return Err(ContractError::InputTooLong);
+        }
+
+        escrow.state = EscrowState::Disputed;
+
+        let dispute_data = DisputeData {
+            escrow_id,
+            reason: reason.clone(),
+            description: description.clone(),
+            evidence_hash: evidence_hash.clone(),
+            status: DisputeStatus::Active,
+            disputed_at: env.ledger().timestamp(),
+            tracking_id: escrow.tracking_id.clone(),
+        };
+
+        save_escrow(&env, escrow_id, &escrow);
+        save_dispute(&env, escrow_id, &dispute_data);
+        increment_counter(&env, &DataKey::TotalDisputed)?;
+        emit_dispute_raised(
             &env,
             payees,
             buyer,
@@ -1339,7 +1408,10 @@ impl Escrow {
             return Err(ContractError::InvalidState);
         }
 
-        if tracking_id.is_empty() {
+        // Block shipping of expired escrows.
+        ensure_not_expired(&env, &escrow)?;
+
+        if tracking_id.len() == 0 {
             return Err(ContractError::InvalidTrackingId);
         }
         if tracking_id.len() > MAX_TRACKING_ID_LEN {
@@ -2233,7 +2305,7 @@ impl Escrow {
         // Reject terminal states
         let is_terminal = matches!(
             escrow.state,
-            EscrowState::Completed | EscrowState::Refunded | EscrowState::Canceled
+            EscrowState::Completed | EscrowState::Refunded | EscrowState::Canceled | EscrowState::Expired
         );
         if is_terminal {
             return Err(ContractError::InvalidState);
