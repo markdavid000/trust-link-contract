@@ -37,6 +37,7 @@ fn test_create_escrow_zero_amount_fails() {
         &0_u32,
         &0_u32,
         &3600_u64,
+        &None::<String>,
     );
     assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
 }
@@ -61,6 +62,7 @@ fn test_create_escrow_below_minimum_fails() {
         &0_u32,
         &0_u32,
         &3600_u64,
+        &None::<String>,
     );
     assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
 }
@@ -86,6 +88,7 @@ fn test_create_escrow_at_minimum_succeeds() {
         &0_u32,
         &0_u32,
         &3600_u64,
+        &None::<String>,
     );
     assert!(matches!(result, Ok(_)));
 }
@@ -112,6 +115,7 @@ fn test_create_escrow_above_minimum_succeeds() {
         &0_u32,
         &0_u32,
         &3600_u64,
+        &None::<String>,
     );
     assert!(matches!(result, Ok(_)));
 }

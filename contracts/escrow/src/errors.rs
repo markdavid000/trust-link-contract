@@ -32,8 +32,6 @@ pub enum ContractError {
     /// Returned when internal checked arithmetic fails while computing a payout or fee.
     ArithmeticError = 12,
     /// Returned when delivery is attempted before the dispute window opens.
-    /// The name clarifies the condition: you cannot confirm delivery until
-    /// the dispute window has closed.
     DeliveryBeforeDisputeWindow = 13,
     /// Returned when a contract action is blocked because the contract is paused.
     ContractPaused = 14,
@@ -43,11 +41,9 @@ pub enum ContractError {
     InvalidStateTransition = 16,
     /// Returned when a supplied string or payload exceeds the supported length.
     InputTooLong = 17,
-    /// Returned when an address argument is invalid for its role (e.g. admin and
-    /// fee_collector must be distinct keys).
+    /// Returned when an address argument is invalid for its role.
     InvalidAddress = 18,
-    /// Returned when an update is a no-op because the new value equals the
-    /// current one (e.g. rotating admin to the same address).
+    /// Returned when an update is a no-op because the new value equals the current one.
     SameAddress = 19,
     /// Returned when an escrow amount exceeds the maximum allowed limit.
     AmountExceedsMaximum = 20,
@@ -55,35 +51,26 @@ pub enum ContractError {
     InvalidTrackingId = 21,
     /// Returned when auto-release is attempted before delivery has been recorded.
     DeliveryNotRecorded = 22,
-    /// Returned when two roles that must be distinct are assigned the same address
-    /// (e.g. resolver == seller, buyer == seller, or buyer == resolver).
+    /// Returned when two roles that must be distinct are assigned the same address.
     ConflictingRoles = 23,
     /// Returned when a buyer attempts to raise a dispute after the dispute window has closed.
     DisputeWindowClosed = 24,
-    /// Returned when `create_milestone_escrow` is called with an empty
-    /// milestone list - there is nothing to stage a release against.
-    EmptyMilestones = 25,
-    /// Returned when `create_milestone_escrow` is called with more stages
-    /// than `MAX_MILESTONES`, bounding storage/gas cost per escrow.
-    TooManyMilestones = 26,
-    /// Returned when `release_milestone` is given an index that does not
-    /// correspond to any stage on the escrow.
-    MilestoneNotFound = 27,
-    /// Returned when `release_milestone` targets a stage that has already
-    /// been paid out - milestone releases are not replayable.
-    MilestoneAlreadyReleased = 28,
-    /// Returned when a milestone-only operation (e.g. `release_milestone`)
-    /// is called on an escrow that was not created with `create_milestone_escrow`.
-    NotMilestoneEscrow = 29,
-    /// Returned when a `fund_escrow_tranche` payment would push the escrow's
-    /// funded total past its agreed `amount`.
-    TrancheExceedsRemaining = 30,
-    /// Returned when a token is not in the configured allowlist while the
-    /// allowlist is enabled.
-    TokenNotAllowed = 31,
+    /// Returned when a resolver is not in the approved registry and strict mode is enabled.
+    UnauthorizedResolver = 25,
+    /// Returned when emergency_drain is called but the contract is not paused.
+    ContractNotPaused = 26,
+    /// Returned when a token is not in the allowlist and the allowlist is enabled.
+    TokenNotAllowed = 27,
+    /// Returned when an escrow's pending expiration window has passed.
+    EscrowExpired = 28,
     /// Returned when an escrow amount is below the configured minimum.
-    AmountBelowMinimum = 32,
-    /// Returned when an action is attempted against an escrow that has
-    /// passed its pending-funding expiry window.
-    EscrowExpired = 33,
+    AmountBelowMinimum = 29,
+    /// Returned when an action requires the escrow to be in PendingFinalization state.
+    NotPendingFinalization = 30,
+    /// Returned when finalization is attempted while the appeal window is still active.
+    AppealWindowActive = 31,
+    /// Returned when the platform fee exceeds its allowed maximum.
+    PlatformFeeExceedsMax = 32,
+    /// Returned when shipping_window is zero or exceeds the maximum allowed value.
+    InvalidShippingWindow = 33,
 }

@@ -7,8 +7,8 @@
 //! `caller != admin → NotAuthorized` guard, not just the host's `require_auth`
 //! reject path.
 
-use crate::{ContractError, Escrow, EscrowClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::{ContractError, Escrow, EscrowClient, Payee};
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 /// Fresh contract with admin/fee_collector initialised. All auths are mocked
 /// so tests can drive the API freely; each test then exercises authorization
@@ -128,16 +128,14 @@ fn create_escrow_rejects_resolver_equal_to_seller() {
 
     assert_eq!(
         client.try_create_escrow(
-        &single_payee(&env, &seller),
-        &None::<Address>,
-        &seller,
-        // resolver == seller
+            &seller,
+            &None::<Address>,
+            &seller, // resolver == seller
             &token,
-        &100_i128,
-        &0_u32,
-        &0_u32,
-        &3600_u64,
-    ),
+            &100_i128,
+            &0_u32,
+            &3600_u64,
+        ),
         Err(Ok(ContractError::ConflictingRoles)),
     );
 }
@@ -154,8 +152,10 @@ fn fund_escrow_rejects_buyer_equal_to_seller() {
     // Mint tokens to the seller so the transfer would otherwise succeed.
     soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&seller, &1000_i128);
 
+    let mut payees_69 = Vec::new(&env);
+    payees_69.push_back(Payee { address: seller.clone(), bps: 10_000 });
     let id = client.create_escrow(
-        &single_payee(&env, &seller),
+        &payees_69,
         &None::<Address>,
         &resolver,
         &token,
@@ -183,8 +183,10 @@ fn fund_escrow_rejects_buyer_equal_to_resolver() {
     // Mint tokens to the resolver so the transfer would otherwise succeed.
     soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&resolver, &1000_i128);
 
+    let mut payees_68 = Vec::new(&env);
+    payees_68.push_back(Payee { address: seller.clone(), bps: 10_000 });
     let id = client.create_escrow(
-        &single_payee(&env, &seller),
+        &payees_68,
         &None::<Address>,
         &resolver,
         &token,

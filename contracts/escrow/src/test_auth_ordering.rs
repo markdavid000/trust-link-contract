@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use crate::{Escrow, EscrowClient, Payee};
+use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
 #[test]
 #[should_panic(expected = "HostError: Error(Auth, InvalidAction)")]
@@ -46,8 +46,13 @@ fn test_unauthorized_create_escrow_fails_early() {
     let token = Address::generate(&env);
 
     // Will panic on `seller.require_auth()` instead of `ensure_not_paused`
+    let mut payees_5 = Vec::new(&env);
+    payees_5.push_back(Payee {
+        address: fake_seller.clone(),
+        bps: 10_000,
+    });
     client.create_escrow(
-        &single_payee(&env, &fake_seller),
+        &payees_5,
         &None::<Address>,
         &resolver,
         &token,

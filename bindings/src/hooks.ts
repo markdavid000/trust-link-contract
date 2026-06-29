@@ -34,10 +34,7 @@ type AsyncAction<T> =
   | { type: "success"; payload: T }
   | { type: "error"; payload: Error };
 
-function asyncReducer<T>(
-  state: AsyncState<T>,
-  action: AsyncAction<T>
-): AsyncState<T> {
+function asyncReducer<T>(state: AsyncState<T>, action: AsyncAction<T>): AsyncState<T> {
   switch (action.type) {
     case "loading":
       return { data: state.data, loading: true, error: null };
@@ -48,11 +45,7 @@ function asyncReducer<T>(
   }
 }
 
-const initial = <T>(): AsyncState<T> => ({
-  data: null,
-  loading: false,
-  error: null,
-});
+const initial = <T>(): AsyncState<T> => ({ data: null, loading: false, error: null });
 
 function normalizeError(err: unknown): Error {
   const contractErr = parseContractError(err);
@@ -78,13 +71,9 @@ function normalizeError(err: unknown): Error {
  */
 export function useEscrow(
   transport: ContractTransport | null,
-  escrowId: bigint | null
+  escrowId: bigint | null,
 ): AsyncState<EscrowData> & { refetch: () => void } {
-  const [state, dispatch] = useReducer(
-    asyncReducer<EscrowData>,
-    undefined,
-    initial
-  );
+  const [state, dispatch] = useReducer(asyncReducer<EscrowData>, undefined, initial);
   const clientRef = useRef<EscrowClient | null>(null);
 
   // Keep client in sync with transport without creating a new one each render
@@ -125,13 +114,9 @@ export function useEscrow(
  */
 export function useDispute(
   transport: ContractTransport | null,
-  escrowId: bigint | null
+  escrowId: bigint | null,
 ): AsyncState<DisputeData | null> & { refetch: () => void } {
-  const [state, dispatch] = useReducer(
-    asyncReducer<DisputeData | null>,
-    undefined,
-    initial
-  );
+  const [state, dispatch] = useReducer(asyncReducer<DisputeData | null>, undefined, initial);
   const clientRef = useRef<EscrowClient | null>(null);
 
   if (transport && clientRef.current === null) {
@@ -172,10 +157,7 @@ type MutationAction =
   | { type: "error"; payload: Error }
   | { type: "reset" };
 
-function mutationReducer(
-  state: MutationState,
-  action: MutationAction
-): MutationState {
+function mutationReducer(state: MutationState, action: MutationAction): MutationState {
   switch (action.type) {
     case "loading":
       return { loading: true, error: null, success: false };
@@ -188,11 +170,7 @@ function mutationReducer(
   }
 }
 
-const initialMutation: MutationState = {
-  loading: false,
-  error: null,
-  success: false,
-};
+const initialMutation: MutationState = { loading: false, error: null, success: false };
 
 // ---------------------------------------------------------------------------
 // useFundEscrow
@@ -222,26 +200,23 @@ export function useFundEscrow(transport: ContractTransport | null): {
     clientRef.current = new EscrowClient(transport);
   }
 
-  const fund = useCallback(async (escrowId: bigint, buyer: string) => {
-    if (!clientRef.current) return;
-    dispatch({ type: "loading" });
-    try {
-      await clientRef.current.fund_escrow(escrowId, buyer);
-      dispatch({ type: "success" });
-    } catch (err) {
-      dispatch({ type: "error", payload: normalizeError(err) });
-    }
-  }, []);
+  const fund = useCallback(
+    async (escrowId: bigint, buyer: string) => {
+      if (!clientRef.current) return;
+      dispatch({ type: "loading" });
+      try {
+        await clientRef.current.fund_escrow(escrowId, buyer);
+        dispatch({ type: "success" });
+      } catch (err) {
+        dispatch({ type: "error", payload: normalizeError(err) });
+      }
+    },
+    [],
+  );
 
   const reset = useCallback(() => dispatch({ type: "reset" }), []);
 
-  return {
-    fund,
-    loading: state.loading,
-    error: state.error,
-    success: state.success,
-    reset,
-  };
+  return { fund, loading: state.loading, error: state.error, success: state.success, reset };
 }
 
 // ---------------------------------------------------------------------------
@@ -272,26 +247,23 @@ export function useConfirmDelivery(transport: ContractTransport | null): {
     clientRef.current = new EscrowClient(transport);
   }
 
-  const confirm = useCallback(async (caller: string, escrowId: bigint) => {
-    if (!clientRef.current) return;
-    dispatch({ type: "loading" });
-    try {
-      await clientRef.current.confirm_delivery(caller, escrowId);
-      dispatch({ type: "success" });
-    } catch (err) {
-      dispatch({ type: "error", payload: normalizeError(err) });
-    }
-  }, []);
+  const confirm = useCallback(
+    async (caller: string, escrowId: bigint) => {
+      if (!clientRef.current) return;
+      dispatch({ type: "loading" });
+      try {
+        await clientRef.current.confirm_delivery(caller, escrowId);
+        dispatch({ type: "success" });
+      } catch (err) {
+        dispatch({ type: "error", payload: normalizeError(err) });
+      }
+    },
+    [],
+  );
 
   const reset = useCallback(() => dispatch({ type: "reset" }), []);
 
-  return {
-    confirm,
-    loading: state.loading,
-    error: state.error,
-    success: state.success,
-    reset,
-  };
+  return { confirm, loading: state.loading, error: state.error, success: state.success, reset };
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +277,7 @@ export function useConfirmDelivery(transport: ContractTransport | null): {
  * ```tsx
  * const { raise, loading, error } = useRaiseDispute(transport);
  *
- * raise("G...CALLER", 42n, "not_received", "Item never arrived", evidenceHashBytes);
+ * raise("G...BUYER", 42n, "not_received", "Item never arrived", evidenceHashBytes);
  * ```
  */
 export function useRaiseDispute(transport: ContractTransport | null): {
@@ -314,7 +286,7 @@ export function useRaiseDispute(transport: ContractTransport | null): {
     escrowId: bigint,
     reason: string,
     description: string,
-    evidenceHash: Uint8Array
+    evidenceHash: Uint8Array,
   ) => Promise<void>;
   loading: boolean;
   error: Error | null;
@@ -334,33 +306,21 @@ export function useRaiseDispute(transport: ContractTransport | null): {
       escrowId: bigint,
       reason: string,
       description: string,
-      evidenceHash: Uint8Array
+      evidenceHash: Uint8Array,
     ) => {
       if (!clientRef.current) return;
       dispatch({ type: "loading" });
       try {
-        await clientRef.current.raise_dispute(
-          caller,
-          escrowId,
-          reason,
-          description,
-          evidenceHash
-        );
+        await clientRef.current.raise_dispute(caller, escrowId, reason, description, evidenceHash);
         dispatch({ type: "success" });
       } catch (err) {
         dispatch({ type: "error", payload: normalizeError(err) });
       }
     },
-    []
+    [],
   );
 
   const reset = useCallback(() => dispatch({ type: "reset" }), []);
 
-  return {
-    raise,
-    loading: state.loading,
-    error: state.error,
-    success: state.success,
-    reset,
-  };
+  return { raise, loading: state.loading, error: state.error, success: state.success, reset };
 }

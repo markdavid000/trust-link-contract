@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use crate::{ContractError, Escrow, EscrowClient};
+use crate::{ContractError, Escrow, EscrowClient, Payee};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, Vec},
     token, Address, Env,
 };
 
@@ -47,16 +47,18 @@ fn test_withdraw_fees_after_multiple_escrows() {
 
     // Complete 3 escrows that each accrue 1% fees via dispute release.
     for _ in 0..3 {
+        let mut payees_72 = Vec::new(&env);
+        payees_72.push_back(Payee { address: seller.clone(), bps: 10_000 });
         let id = client.create_escrow(
-        &single_payee(&env, &seller),
-        &None::<Address>,
-        &resolver,
-        &token,
-        &1000_i128,
-        &100_u32,
-        &0_u32,
-        &3600_u64,
-    );
+            &payees_72,
+            &None::<Address>,
+            &resolver,
+            &token,
+            &1000_i128,
+            &100_u32,
+            &0_u32,
+            &3600_u64,
+        );
         client.fund_escrow(&id, &buyer);
         client.mark_shipped(
             &seller,
@@ -104,8 +106,10 @@ fn test_withdraw_fees_multiple_tokens() {
 
     // Accrue fees for Token A (1000 amount, 1% fee = 10)
     mint_tokens(&env, &token_a, &buyer, 1000);
+    let mut payees_71 = Vec::new(&env);
+    payees_71.push_back(Payee { address: seller.clone(), bps: 10_000 });
     let id_a = client.create_escrow(
-        &single_payee(&env, &seller),
+        &payees_71,
         &None::<Address>,
         &resolver,
         &token_a,
@@ -131,8 +135,10 @@ fn test_withdraw_fees_multiple_tokens() {
 
     // Accrue fees for Token B (2000 amount, 2% fee = 40)
     mint_tokens(&env, &token_b, &buyer, 2000);
+    let mut payees_70 = Vec::new(&env);
+    payees_70.push_back(Payee { address: seller.clone(), bps: 10_000 });
     let id_b = client.create_escrow(
-        &single_payee(&env, &seller),
+        &payees_70,
         &None::<Address>,
         &resolver,
         &token_b,

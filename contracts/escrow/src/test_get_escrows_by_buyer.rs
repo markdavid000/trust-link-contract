@@ -1,7 +1,8 @@
 #![cfg(test)]
 
 use crate::test_helpers::{create_funded_escrow, setup_contract};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::Payee;
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn register_token(env: &Env) -> Address {
     let token_admin = Address::generate(env);
@@ -41,8 +42,13 @@ fn test_get_escrows_by_buyer() {
     );
 
     // Create 1 pending escrow (no buyer yet)
-    let _id4 = client.create_escrow(
-        &single_payee(&env, &seller),
+    let mut payees_47 = Vec::new(&env);
+    payees_47.push_back(Payee {
+        address: seller.clone(),
+        bps: 10_000,
+    });
+    let _id4 = client.create_escrow_8(
+        &payees_47,
         &None::<Address>,
         &resolver,
         &token,
@@ -83,8 +89,13 @@ fn test_buyer_index_populated_on_fund() {
 
     mint_tokens(&env, &token, &buyer, 1000);
 
-    let id = client.create_escrow(
-        &single_payee(&env, &seller),
+    let mut payees_46 = Vec::new(&env);
+    payees_46.push_back(Payee {
+        address: seller.clone(),
+        bps: 10_000,
+    });
+    let id = client.create_escrow_8(
+        &payees_46,
         &None::<Address>,
         &resolver,
         &token,

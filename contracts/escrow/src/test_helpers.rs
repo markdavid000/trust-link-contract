@@ -1,12 +1,10 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient};
+use crate::{Escrow, EscrowClient, Payee};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env,
+    token, Address, Env, Vec,
 };
-use crate::Payee;
-use soroban_sdk::Vec;
 
 pub fn setup_contract(env: &Env) -> (Address, EscrowClient, Address, Address) {
     let contract_id = env.register(Escrow, ());
@@ -38,8 +36,13 @@ pub fn create_funded_escrow(
     shipping_window: u64,
 ) -> u64 {
     mint_token(env, token, buyer, amount);
-    let id = client.create_escrow(
-        &single_payee(env, seller),
+    let mut payees = Vec::new(env);
+    payees.push_back(Payee {
+        address: seller.clone(),
+        bps: 10_000,
+    });
+    let id = client.create_escrow_7(
+        &payees,
         &None::<Address>,
         resolver,
         token,
@@ -47,45 +50,8 @@ pub fn create_funded_escrow(
         &fee_bps,
         &0_u32,
         &shipping_window,
+        &None::<String>,
     );
     client.fund_escrow(&id, buyer);
     id
-}
-
-pub fn create_funded_milestone_escrow(
-    env: &Env,
-    client: &EscrowClient,
-    seller: &Address,
-    buyer: &Address,
-    resolver: &Address,
-    token: &Address,
-    milestone_amounts: &soroban_sdk::Vec<i128>,
-    fee_bps: u32,
-    shipping_window: u64,
-) -> u64 {
-    let total: i128 = milestone_amounts.iter().sum();
-    mint_token(env, token, buyer, total);
-    let id = client.create_milestone_escrow(
-        seller,
-        &None::<Address>,
-        resolver,
-        token,
-        milestone_amounts,
-        &fee_bps,
-        &shipping_window,
-    );
-    client.fund_escrow(&id, buyer);
-    id
-}
-
-/// Wraps a single address into a one-entry, 100%-bps payees vec, so existing
-/// tests written for the old single-seller create_escrow signature don't
-/// need to be rewritten field-by-field for the new multi-payee model.
-pub fn single_payee(env: &Env, address: &Address) -> Vec<Payee> {
-    let mut payees = Vec::new(env);
-    payees.push_back(Payee {
-        address: address.clone(),
-        bps: 10_000,
-    });
-    payees
 }

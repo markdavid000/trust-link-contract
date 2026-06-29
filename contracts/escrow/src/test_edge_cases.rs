@@ -2,9 +2,9 @@
 
 use crate::helpers::payout::calculate_protocol_fee;
 use crate::test_helpers::{advance_time, create_funded_escrow, setup_contract};
-use crate::{ContractError, Escrow, EscrowClient, MIN_ESCROW_AMOUNT};
+use crate::{ContractError, Escrow, EscrowClient, MIN_ESCROW_AMOUNT, Payee};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, Ledger as _, Vec},
     token, Address, BytesN, Env, String as SorobanString, Symbol,
 };
 
@@ -86,8 +86,13 @@ fn test_buyer_index_populated_on_cancel_by_buyer() {
     let resolver = Address::generate(&env);
 
     // Create a Pending escrow that names the buyer up front.
+    let mut payees_25 = Vec::new(&env);
+    payees_25.push_back(Payee {
+        address: seller.clone(),
+        bps: 10_000,
+    });
     let id = client.create_escrow(
-        &single_payee(&env, &seller),
+        &payees_25,
         &Some(buyer.clone()),
         &resolver,
         &token,
@@ -174,26 +179,24 @@ fn test_min_escrow_amount_rejects_dust_prone_amount() {
     // 99 stroops, 1% fee — the exact case from the bug report.
     // MIN_ESCROW_AMOUNT = 1, so 99 is above the minimum and should succeed for creation.
     let result = client.try_create_escrow(
-        &single_payee(&env, &seller),
+        &seller,
         &None::<Address>,
         &resolver,
         &token,
         &99_i128,
         &100_u32,
-        &0_u32,
         &3600_u64,
     );
     assert!(result.is_ok());
 
     // One stroop below the minimum is still rejected.
     let result = client.try_create_escrow(
-        &single_payee(&env, &seller),
+        &seller,
         &None::<Address>,
         &resolver,
         &token,
         &0_i128,
         &100_u32,
-        &0_u32,
         &3600_u64,
     );
     assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));

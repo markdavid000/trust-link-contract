@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-
+  
 CONTRACT_NAME="trustlink-escrow"
 WASM_DIR="target/wasm32v1-none/release"
 # Cargo converts hyphens in the crate name to underscores in the artifact
